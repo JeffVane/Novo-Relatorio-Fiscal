@@ -5,9 +5,9 @@ import sqlite3
 # Conexão com o banco de dados
 # --------------------------------
 
-def connect_db(self):
+def connect_db():
     """Conecta ao banco de dados SQLite e retorna a conexão."""
-    return sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste/application.db')
+    return sqlite3.connect(r'\\192.168.0.120\BancoSiaFisk\application.db')
 
 
 # --------------------------------
@@ -408,7 +408,7 @@ def registrar_log(usuario, acao, detalhes=""):
 def get_procedures():
     """Consulta a tabela 'procedures' e retorna uma lista de procedimentos únicos"""
     try:
-        conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste/application.db')
+        conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste\application.db')
         cursor = conn.cursor()
 
         query = "SELECT DISTINCT id, name FROM procedures"
@@ -521,7 +521,7 @@ def assign_procedure(username, agendamento_data, procedures_quantities):
 
         print(f"[DEBUG] Salvando procedimentos para {username} na tabela: {table_name}")
 
-        conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste/application.db')
+        conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste\application.db')
         cursor = conn.cursor()
 
         # Criar a tabela do usuário caso não exista
@@ -677,7 +677,7 @@ def grant_admin_permissions():
 
 
 def reset_user_data():
-    conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste/application.db')
+    conn = sqlite3.connect(r'\\192.168.0.120\public\Bancodeteste\application.db')
     cursor = conn.cursor()
 
     # Pega os nomes das tabelas que começam com 'procedimentos'
