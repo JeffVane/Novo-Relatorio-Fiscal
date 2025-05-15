@@ -2,10 +2,84 @@ import sys
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QMessageBox, QGraphicsOpacityEffect)
 from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtCore import QPropertyAnimation, Qt
+from PyQt5.QtWidgets import QMessageBox
 from db import check_login, get_users  # Buscar usuários do banco de dados
 from main import MainApp  # Importa a tela principal
-
+import os
 from db import connect_db
+import requests
+import zipfile
+import tempfile
+import shutil
+
+# Configurações do GitHub
+REPO_OWNER = "JeffVane"
+REPO_NAME = "Novo-Relatorio-Fiscal"
+BRANCH = "main"
+ZIP_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/{BRANCH}.zip"
+VERSION_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/version.txt"
+LOCAL_VERSION_FILE = "version.txt"
+
+
+def get_remote_version():
+    try:
+        response = requests.get(VERSION_URL)
+        response.raise_for_status()
+        return response.text.strip()
+    except:
+        return None
+
+
+def get_local_version():
+    try:
+        with open(LOCAL_VERSION_FILE, "r") as f:
+            return f.read().strip()
+    except:
+        return "0.0.0"
+
+
+def baixar_e_extrair_zip():
+    temp_dir = tempfile.gettempdir()
+    zip_path = os.path.join(temp_dir, "update.zip")
+
+    response = requests.get(ZIP_URL)
+    with open(zip_path, "wb") as f:
+        f.write(response.content)
+
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(temp_dir)
+
+    extracted_path = os.path.join(temp_dir, f"{REPO_NAME}-{BRANCH}")
+
+    # Copia os arquivos para o diretório atual
+    for item in os.listdir(extracted_path):
+        src = os.path.join(extracted_path, item)
+        dst = os.path.join(os.getcwd(), item)
+        if os.path.isdir(src):
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
+    os.remove(zip_path)
+    shutil.rmtree(extracted_path)
+
+
+def verificar_atualizacao():
+    remote = get_remote_version()
+    local = get_local_version()
+    if remote and remote != local:
+        QMessageBox.information(
+            None,
+            "Atualização disponível",
+            f"Uma nova versão do sistema foi encontrada!\n"
+            f"Versão atual: {local}\nNova versão: {remote}\n\nO sistema será atualizado automaticamente."
+        )
+        baixar_e_extrair_zip()
+        with open(LOCAL_VERSION_FILE, "w") as f:
+            f.write(remote)
+        os.execv(sys.executable, [sys.executable, __file__])
 
 
 class LoginWindow(QDialog):
@@ -13,7 +87,7 @@ class LoginWindow(QDialog):
         super().__init__()
         self.setWindowTitle("Login - SIAFISC CRCDF")
         self.setFixedSize(400, 320)  # Ajustado para acomodar os elementos
-        self.setWindowIcon(QIcon("crc.ico"))  # Ícone da janela
+        self.setWindowIcon(QIcon("crc.png"))  # Ícone da janela
 
         # Aplicar fundo branco para evitar efeito preto no fade-in
         self.setStyleSheet("background-color: white;")
@@ -180,25 +254,11 @@ class LoginWindow(QDialog):
             QMessageBox.critical(self, "Erro Crítico", f"Ocorreu um erro inesperado ao tentar fazer login:\n{str(e)}")
             print(f"[ERROR] Erro inesperado ao fazer login: {e}")
 
-    def main():
-        """ Inicia a aplicação com a tela de login """
-        try:
-            app = QApplication(sys.argv)
-            login_window = LoginWindow()
-
-            if login_window.exec_() == QDialog.Accepted:
-                print(f"[DEBUG] Iniciando MainApp com user_info: {login_window.user_info}")  # 🔹 Debug para verificar `is_visitor`
-                main_window = MainApp(login_window.user_info)  # ✅ Passando corretamente `is_visitor`
-                main_window.show()
-                sys.exit(app.exec_())
-        except Exception as e:
-            print(f"[ERROR] Erro inesperado na aplicação: {str(e)}")
-            QMessageBox.critical(None, "Erro Crítico", f"Erro inesperado: {str(e)}")
-
 
 def main():
     """ Inicia a aplicação com a tela de login """
     try:
+        verificar_atualizacao()  # ⬅️ ADICIONE AQUI
         app = QApplication(sys.argv)
         login_window = LoginWindow()
 
@@ -209,6 +269,7 @@ def main():
     except Exception as e:
         print(f"[ERROR] Erro inesperado na aplicação: {str(e)}")
         QMessageBox.critical(None, "Erro Crítico", f"Erro inesperado: {str(e)}")
+
 
 
 if __name__ == "__main__":
