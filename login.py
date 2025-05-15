@@ -7,10 +7,11 @@ from db import check_login, get_users  # Buscar usuários do banco de dados
 from main import MainApp  # Importa a tela principal
 import os
 from db import connect_db
+import sys
+import os
+import subprocess
 import requests
-import zipfile
-import tempfile
-import shutil
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 # Configurações do GitHub
 REPO_OWNER = "JeffVane"
@@ -19,7 +20,6 @@ BRANCH = "main"
 ZIP_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/{BRANCH}.zip"
 VERSION_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/version.txt"
 LOCAL_VERSION_FILE = "version.txt"
-
 
 def get_remote_version():
     try:
@@ -35,36 +35,6 @@ def get_local_version():
             return f.read().strip()
     except:
         return "0.0.0"
-
-
-
-def baixar_e_extrair_zip():
-    temp_dir = tempfile.gettempdir()
-    zip_path = os.path.join(temp_dir, "update.zip")
-
-    response = requests.get(ZIP_URL)
-    with open(zip_path, "wb") as f:
-        f.write(response.content)
-
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(temp_dir)
-
-    extracted_path = os.path.join(temp_dir, f"{REPO_NAME}-{BRANCH}")
-
-    # Copia os arquivos para o diretório atual
-    for item in os.listdir(extracted_path):
-        src = os.path.join(extracted_path, item)
-        dst = os.path.join(os.getcwd(), item)
-        if os.path.isdir(src):
-            if os.path.exists(dst):
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-        else:
-            shutil.copy2(src, dst)
-
-    os.remove(zip_path)
-    shutil.rmtree(extracted_path)
-
 
 def verificar_atualizacao():
     remote = get_remote_version()
@@ -86,39 +56,10 @@ def verificar_atualizacao():
 
         if resposta == QMessageBox.Yes:
             try:
-                temp_dir = tempfile.gettempdir()
-                zip_path = os.path.join(temp_dir, "update.zip")
-
-                response = requests.get(ZIP_URL)
-                with open(zip_path, "wb") as f:
-                    f.write(response.content)
-
-                with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                    zip_ref.extractall(temp_dir)
-
-                extracted_path = os.path.join(temp_dir, f"{REPO_NAME}-{BRANCH}")
-
-                for item in os.listdir(extracted_path):
-                    if item.startswith(".git"):
-                        continue  # pula arquivos ocultos
-                    src = os.path.join(extracted_path, item)
-                    dst = os.path.join(os.getcwd(), item)
-                    if os.path.isdir(src):
-                        if os.path.exists(dst):
-                            shutil.rmtree(dst, ignore_errors=True)
-                        shutil.copytree(src, dst)
-                    else:
-                        shutil.copy2(src, dst)
-
-                with open(LOCAL_VERSION_FILE, "w") as f:
-                    f.write(remote)
-
-                os.execv(sys.executable, [sys.executable, __file__])
+                subprocess.Popen(["python", "atualizador_externo.py"], shell=True)
+                sys.exit(0)
             except Exception as e:
-                QMessageBox.critical(None, "Erro ao atualizar", f"Erro ao atualizar:\n{str(e)}")
-
-
-
+                QMessageBox.critical(None, "Erro ao atualizar", f"Erro ao iniciar atualizador:\n{str(e)}")
 
 
 class LoginWindow(QDialog):
