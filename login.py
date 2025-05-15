@@ -69,8 +69,8 @@ def baixar_e_extrair_zip():
 def verificar_atualizacao():
     remote = get_remote_version()
     local = get_local_version()
+
     if remote and remote != local:
-        # Garante que o QApplication exista para exibir QMessageBox
         if not QApplication.instance():
             _ = QApplication(sys.argv)
 
@@ -79,21 +79,44 @@ def verificar_atualizacao():
             "Atualização disponível",
             f"Uma nova versão do sistema está disponível!\n\n"
             f"Versão atual: {local}\nNova versão: {remote}\n\n"
-            "Deseja atualizar agora?",
+            f"Deseja atualizar agora?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
 
         if resposta == QMessageBox.Yes:
             try:
-                baixar_e_extrair_zip()
+                temp_dir = tempfile.gettempdir()
+                zip_path = os.path.join(temp_dir, "update.zip")
+
+                response = requests.get(ZIP_URL)
+                with open(zip_path, "wb") as f:
+                    f.write(response.content)
+
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(temp_dir)
+
+                extracted_path = os.path.join(temp_dir, f"{REPO_NAME}-{BRANCH}")
+
+                for item in os.listdir(extracted_path):
+                    if item.startswith(".git"):
+                        continue  # pula arquivos ocultos
+                    src = os.path.join(extracted_path, item)
+                    dst = os.path.join(os.getcwd(), item)
+                    if os.path.isdir(src):
+                        if os.path.exists(dst):
+                            shutil.rmtree(dst, ignore_errors=True)
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+
                 with open(LOCAL_VERSION_FILE, "w") as f:
                     f.write(remote)
+
                 os.execv(sys.executable, [sys.executable, __file__])
             except Exception as e:
-                QMessageBox.critical(None, "Erro", f"Erro ao atualizar: {str(e)}")
-        else:
-            print("[INFO] Usuário optou por não atualizar.")
+                QMessageBox.critical(None, "Erro ao atualizar", f"Erro ao atualizar:\n{str(e)}")
+
 
 
 
