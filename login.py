@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QMessageBox, QGraphicsOpacityEffect)
 from PyQt5.QtGui import QIcon, QPixmap
-from PyQt5.QtCore import QPropertyAnimation, Qt
+from PyQt5.QtCore import QPropertyAnimation, Qt,QTimer,QSize,QThread,pyqtSignal
 from PyQt5.QtWidgets import QMessageBox
 from db import check_login, get_users  # Buscar usuários do banco de dados
 from main import MainApp  # Importa a tela principal
@@ -12,6 +12,8 @@ import os
 import subprocess
 import requests
 from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtGui import QMovie
+
 
 # Configurações do GitHub
 REPO_OWNER = "JeffVane"
@@ -221,7 +223,14 @@ class LoginWindow(QDialog):
                     "is_visitor": is_visitor
                 }
 
-                self.accept()  # Fecha a janela de login e abre o MainApp
+                # Fecha a janela de login
+                self.close()
+
+                # Exibe a tela de carregamento
+                loading = LoadingScreen()
+                if loading.exec_() == QDialog.Accepted:
+                    self.accept()  # Sinaliza que o login foi bem-sucedido para abrir a MainApp
+            # Fecha a janela de login e abre o MainApp
 
             else:
                 QMessageBox.warning(self, "Erro de Login", "Usuário ou senha incorretos! Tente novamente.")
@@ -249,6 +258,42 @@ def main():
     except Exception as e:
         print(f"[ERROR] Erro inesperado na aplicação: {str(e)}")
         QMessageBox.critical(None, "Erro Crítico", f"Erro inesperado: {str(e)}")
+
+class LoadingScreen(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Carregando sistema...")
+        self.setFixedSize(250, 250)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        self.setStyleSheet("background-color: white;")
+        self.setWindowIcon(QIcon("crc.ico"))
+
+        layout = QVBoxLayout()
+
+        # Label que exibirá o GIF
+        self.label_animation = QLabel(self)
+        self.label_animation.setAlignment(Qt.AlignCenter)
+
+        self.movie = QMovie("loading.gif")
+        self.movie.setScaledSize(QSize(100, 100))  # Ajuste o tamanho do GIF aqui
+        self.label_animation.setMovie(self.movie)
+
+        layout.addWidget(self.label_animation)
+
+        # Texto opcional abaixo do GIF
+        label_text = QLabel("Inicializando...")
+        label_text.setAlignment(Qt.AlignCenter)
+        label_text.setStyleSheet("font-size: 14px; color: #333;")
+        layout.addWidget(label_text)
+
+        self.setLayout(layout)
+        self.movie.start()
+
+        # Simula tempo de carregamento
+        self.timer = QTimer()
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.accept)
+        self.timer.start(3000)
 
 
 
