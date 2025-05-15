@@ -1,6 +1,6 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QMessageBox, QGraphicsOpacityEffect)
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon, QPixmap,QMovie
 from PyQt5.QtCore import QPropertyAnimation, Qt,QTimer,QSize,QThread,pyqtSignal
 from PyQt5.QtWidgets import QMessageBox
 from db import check_login, get_users  # Buscar usuários do banco de dados
@@ -11,16 +11,18 @@ import sys
 import os
 import subprocess
 import requests
+import tempfile
+import os
+import ctypes
+import sys
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtGui import QMovie
-
 
 # Configurações do GitHub
 REPO_OWNER = "JeffVane"
 REPO_NAME = "Novo-Relatorio-Fiscal"
 BRANCH = "main"
-ZIP_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/{BRANCH}.zip"
 VERSION_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/version.txt"
+INSTALLER_URL = "https://github.com/JeffVane/Novo-Relatorio-Fiscal/releases/download/v1.1.1/Instalador_RelatorioFiscal.exe"
 LOCAL_VERSION_FILE = "version.txt"
 
 def get_remote_version():
@@ -51,17 +53,31 @@ def verificar_atualizacao():
             "Atualização disponível",
             f"Uma nova versão do sistema está disponível!\n\n"
             f"Versão atual: {local}\nNova versão: {remote}\n\n"
-            f"Deseja atualizar agora?",
+            f"Deseja baixar e instalar agora?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
 
         if resposta == QMessageBox.Yes:
             try:
-                subprocess.Popen(["python", "atualizador_externo.py"], shell=True)
+                temp_dir = tempfile.gettempdir()
+                installer_path = os.path.join(temp_dir, "Instalador_RelatorioFiscal.exe")
+
+                # Baixar instalador do GitHub
+                r = requests.get(INSTALLER_URL)
+                with open(installer_path, "wb") as f:
+                    f.write(r.content)
+
+                # Executar como administrador
+                ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", installer_path, None, None, 1
+                )
+
                 sys.exit(0)
+
             except Exception as e:
-                QMessageBox.critical(None, "Erro ao atualizar", f"Erro ao iniciar atualizador:\n{str(e)}")
+                QMessageBox.critical(None, "Erro", f"Erro ao baixar ou executar o instalador:\n{str(e)}")
+
 
 
 class LoginWindow(QDialog):
