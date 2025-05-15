@@ -29,13 +29,13 @@ def get_remote_version():
     except:
         return None
 
-
 def get_local_version():
     try:
         with open(LOCAL_VERSION_FILE, "r") as f:
             return f.read().strip()
     except:
         return "0.0.0"
+
 
 
 def baixar_e_extrair_zip():
@@ -70,16 +70,32 @@ def verificar_atualizacao():
     remote = get_remote_version()
     local = get_local_version()
     if remote and remote != local:
-        QMessageBox.information(
+        # Garante que o QApplication exista para exibir QMessageBox
+        if not QApplication.instance():
+            _ = QApplication(sys.argv)
+
+        resposta = QMessageBox.question(
             None,
             "Atualização disponível",
-            f"Uma nova versão do sistema foi encontrada!\n"
-            f"Versão atual: {local}\nNova versão: {remote}\n\nO sistema será atualizado automaticamente."
+            f"Uma nova versão do sistema está disponível!\n\n"
+            f"Versão atual: {local}\nNova versão: {remote}\n\n"
+            "Deseja atualizar agora?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
         )
-        baixar_e_extrair_zip()
-        with open(LOCAL_VERSION_FILE, "w") as f:
-            f.write(remote)
-        os.execv(sys.executable, [sys.executable, __file__])
+
+        if resposta == QMessageBox.Yes:
+            try:
+                baixar_e_extrair_zip()
+                with open(LOCAL_VERSION_FILE, "w") as f:
+                    f.write(remote)
+                os.execv(sys.executable, [sys.executable, __file__])
+            except Exception as e:
+                QMessageBox.critical(None, "Erro", f"Erro ao atualizar: {str(e)}")
+        else:
+            print("[INFO] Usuário optou por não atualizar.")
+
+
 
 
 class LoginWindow(QDialog):
