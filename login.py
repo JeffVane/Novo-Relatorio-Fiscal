@@ -15,9 +15,12 @@ import tempfile
 import os
 import ctypes
 import sys
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox, QProgressDialog
+from PyQt5.QtCore import QEventLoop
 
-# Configurações do GitHub
+
+
+# Configurações
 REPO_OWNER = "JeffVane"
 REPO_NAME = "Novo-Relatorio-Fiscal"
 BRANCH = "main"
@@ -25,11 +28,10 @@ VERSION_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRAN
 INSTALLER_URL = "https://github.com/JeffVane/Novo-Relatorio-Fiscal/releases/download/v1.1.1/Instalador_RelatorioFiscal.exe"
 LOCAL_VERSION_FILE = "version.txt"
 
+
 def get_remote_version():
     try:
-        response = requests.get(VERSION_URL)
-        response.raise_for_status()
-        return response.text.strip()
+        return requests.get(VERSION_URL).text.strip()
     except:
         return None
 
@@ -39,6 +41,40 @@ def get_local_version():
             return f.read().strip()
     except:
         return "0.0.0"
+
+class DownloadThread(QThread):
+    progress_update = pyqtSignal(int, float, float)
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def run(self):
+        try:
+            temp_dir = tempfile.gettempdir()
+            installer_path = os.path.join(temp_dir, "Instalador_RelatorioFiscal.exe")
+
+            with requests.get(INSTALLER_URL, stream=True) as r:
+                r.raise_for_status()
+                total = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                chunk_size = 2 * 1024 * 1024  # 2 MB
+
+                with open(installer_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            percent = int((downloaded / total) * 100)
+                            mb_downloaded = downloaded / (1024 * 1024)
+                            mb_total = total / (1024 * 1024)
+                            self.progress_update.emit(percent, mb_downloaded, mb_total)
+
+            self.finished.emit(installer_path)
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+
 
 def verificar_atualizacao():
     remote = get_remote_version()
@@ -59,24 +95,45 @@ def verificar_atualizacao():
         )
 
         if resposta == QMessageBox.Yes:
-            try:
-                temp_dir = tempfile.gettempdir()
-                installer_path = os.path.join(temp_dir, "Instalador_RelatorioFiscal.exe")
+            progress = QProgressDialog("Preparando download...", "Cancelar", 0, 100)
+            progress.setWindowTitle("Baixando Atualização")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumWidth(400)
+            progress.setValue(0)
+            progress.show()
 
-                # Baixar instalador do GitHub
-                r = requests.get(INSTALLER_URL)
-                with open(installer_path, "wb") as f:
-                    f.write(r.content)
+            thread = DownloadThread()
 
-                # Executar como administrador
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", installer_path, None, None, 1
-                )
+            def atualizar_barra(percent, mb_down, mb_total):
+                progress.setValue(percent)
+                progress.setLabelText(f"Baixando: {mb_down:.1f} MB de {mb_total:.1f} MB")
 
-                sys.exit(0)
+            def ao_finalizar(caminho):
+                progress.close()
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", caminho, None, None, 1)
+                sys.exit(0)  # Termina para deixar o instalador continuar
 
-            except Exception as e:
-                QMessageBox.critical(None, "Erro", f"Erro ao baixar ou executar o instalador:\n{str(e)}")
+            def ao_errar(mensagem):
+                progress.close()
+                QMessageBox.critical(None, "Erro", f"Erro ao baixar instalador:\n{mensagem}")
+                loop.quit()
+
+            thread.progress_update.connect(atualizar_barra)
+            thread.finished.connect(ao_finalizar)
+            thread.error.connect(ao_errar)
+
+            # ✅ Espera o fim da thread antes de continuar
+            loop = QEventLoop()
+            thread.finished.connect(loop.quit)
+            thread.error.connect(loop.quit)
+
+            thread.start()
+            loop.exec_()
+
+            return True  # Atualizou
+
+    return False  # Não atualizou
+
 
 
 
@@ -261,19 +318,24 @@ class LoginWindow(QDialog):
 
 
 def main():
-    """ Inicia a aplicação com a tela de login """
     try:
-        verificar_atualizacao()  # ⬅️ ADICIONE AQUI
         app = QApplication(sys.argv)
-        login_window = LoginWindow()
 
-        if login_window.exec_() == QDialog.Accepted:
-            main_window = MainApp(login_window.user_info)
-            main_window.show()
-            sys.exit(app.exec_())
+        # ⬇️ Chama o verificador, e impede que a aplicação continue até terminar
+        atualizado = verificar_atualizacao()
+        if not atualizado:  # Só continua se não foi atualizado agora
+            login_window = LoginWindow()
+            if login_window.exec_() == QDialog.Accepted:
+                main_window = MainApp(login_window.user_info)
+                main_window.show()
+                sys.exit(app.exec_())
+        else:
+            sys.exit(0)  # já reiniciou a aplicação via instalador
+
     except Exception as e:
         print(f"[ERROR] Erro inesperado na aplicação: {str(e)}")
         QMessageBox.critical(None, "Erro Crítico", f"Erro inesperado: {str(e)}")
+
 
 class LoadingScreen(QDialog):
     def __init__(self):

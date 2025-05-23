@@ -573,7 +573,7 @@ class AdminTab(QWidget):
         senha_digitada = dialog.get_password()
 
         try:
-            conn = sqlite3.connect("application.db")
+            conn = sqlite3.connect("r'\\192.168.0.120\BancoSiaFisk\application.db'")
             cursor = conn.cursor()
             cursor.execute("SELECT password FROM users WHERE is_admin = 1")
             senhas = [row[0] for row in cursor.fetchall()]

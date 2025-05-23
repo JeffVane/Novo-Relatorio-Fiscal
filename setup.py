@@ -2,25 +2,30 @@ import os
 from cx_Freeze import setup, Executable
 
 base = "Win32GUI"
-
-# Caminho absoluto da pasta onde está o setup.py
 caminho_base = os.path.dirname(__file__)
 
-# Lista de imagens com caminho absoluto
+# Imagens e outros arquivos estáticos
 imagens = [
     "add.png", "atribuir.png", "config.png", "crc.ico", "delete.png",
     "edit.png", "login_logo.png", "menu.png", "procedimento.png",
     "siafisk.jpg", "web.png", "xlsx.png"
 ]
 
-include_files = [os.path.join(caminho_base, img) for img in imagens]
-include_files.append(os.path.join(caminho_base, "dejavu-fonts-ttf-2.37.tar.bz2"))
+# Arquivos adicionais obrigatórios
+outros_arquivos = [
+    "dejavu-fonts-ttf-2.37.tar.bz2",
+    "version.txt",
+    "loading.gif",
+    "atualizador_externo.py"
+]
+
+include_files = [os.path.join(caminho_base, arq) for arq in imagens + outros_arquivos]
 
 executables = [
     Executable(
         script="login.py",
         base=base,
-        target_name="RelatorioFiscal.exe",
+        target_name="RelatorioFiscal 2.exe",
         icon="crc.ico"
     )
 ]
@@ -31,8 +36,9 @@ setup(
     description="Sistema de Relatórios - CRCDF",
     options={
         "build_exe": {
-            "packages": ["os", "sqlite3"],
-            "include_files": include_files
+            "packages": ["os", "sqlite3", "requests", "zipfile", "tempfile", "shutil", "ctypes"],
+            "include_files": include_files,
+            "include_msvcr": True  # Para evitar erro de DLL ausente
         }
     },
     executables=executables
