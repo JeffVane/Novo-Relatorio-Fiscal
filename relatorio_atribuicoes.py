@@ -14,6 +14,11 @@ from db import connect_db
 from datetime import datetime
 from db import registrar_log
 from PyQt5.QtCore import pyqtSignal
+from datetime import datetime, timedelta
+import pandas as pd
+
+
+ORIGEM_EXCEL = datetime(1899, 12, 30)   # regra do Excel
 
 
 
@@ -350,7 +355,23 @@ class RelatorioAtribuicoesTab(QWidget):
             QMessageBox.critical(self, "Erro", f"Erro ao exibir os dados na tabela:\n{str(e)}")
             print(f"[ERROR] Erro ao exibir os dados na tabela: {e}")
 
+    @staticmethod
+    def parse_dt(valor: object) -> datetime:
+        """Converte valor vindo do banco para datetime; devolve datetime.min se falhar."""
+        try:
+            # serial do Excel (int/float ou string numérica)
+            if isinstance(valor, (int, float)) or (isinstance(valor, str) and valor.isdigit()):
+                return ORIGEM_EXCEL + timedelta(days=int(float(valor)))
 
+            # formatos comuns de string
+            for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+                try:
+                    return datetime.strptime(str(valor), fmt)
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+        return datetime.min  # sentinela “inválido”
 
     def populate_table(self, data):
         """ Preenche a tabela com os dados e fonte fixa, sem reduzir tamanho para caber na célula. """
@@ -368,7 +389,8 @@ class RelatorioAtribuicoesTab(QWidget):
         is_admin = self.user_info.get("is_admin", False)
 
         # Ordena os agendamentos mais recentes para o topo
-        data.sort(key=lambda row: datetime.strptime(row[1], "%d-%m-%Y"), reverse=True)
+        data.sort(key=lambda row: self.parse_dt(row[1]), reverse=True)
+
 
         for i, row in enumerate(data):
             colunas = [
@@ -608,6 +630,11 @@ class RelatorioAtribuicoesTab(QWidget):
             edit_procedure_action = QAction(QIcon("edit.png"), "Editar Procedimento Atribuído", self)
             delete_scheduling_action = QAction(QIcon("delete.png"), "Excluir Agendamento", self)
             add_procedure_action = QAction(QIcon("add.png"), "Incluir Procedimento", self)
+            edit_agendamento_action = QAction(QIcon("edit.png"), "Editar Dados do Agendamento", self)
+
+
+            edit_agendamento_action.triggered.connect(self.edit_agendamento)
+            menu.addAction(edit_agendamento_action)
 
             edit_quantity_action.triggered.connect(self.edit_quantity)
             edit_procedure_action.triggered.connect(self.edit_procedure)
@@ -943,6 +970,139 @@ class RelatorioAtribuicoesTab(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao excluir agendamento:\n{str(e)}")
+
+    def edit_agendamento(self):
+        try:
+            selected_row = self.table.currentRow()
+            if selected_row == -1:
+                QMessageBox.warning(self, "Aviso", "Selecione um agendamento para editar.")
+                return
+
+            # Define posições das colunas
+            incluir_fiscal = self.user_info.get("is_admin", False) or self.user_info.get("is_visitor", False)
+            col_data = 0
+            col_numero = 1
+            col_tipo = 3 if incluir_fiscal else 2
+            col_registro = 4 if incluir_fiscal else 3
+            col_nome = 5 if incluir_fiscal else 4
+            col_procedimento = 6 if incluir_fiscal else 5
+
+            # Pega dados atuais
+            data_conclusao = self.table.item(selected_row, col_data).text().strip()
+            numero_agendamento = self.table.item(selected_row, col_numero).text().strip()
+            tipo_registro = self.table.item(selected_row, col_tipo).text().strip()
+            registro = self.table.item(selected_row, col_registro).text().strip()
+            nome = self.table.item(selected_row, col_nome).text().strip()
+            procedimento = self.table.item(selected_row, col_procedimento).text().strip()
+
+            dialog = EditAgendamentoDialog(
+                data_conclusao, numero_agendamento, tipo_registro, registro, nome, parent=self
+            )
+            if dialog.exec_() == QDialog.Accepted:
+                novos_dados = dialog.get_data()
+
+                # Atualiza na interface
+                self.table.setItem(selected_row, col_data, QTableWidgetItem(novos_dados["data_conclusao"]))
+                self.table.setItem(selected_row, col_numero, QTableWidgetItem(novos_dados["numero_agendamento"]))
+                self.table.setItem(selected_row, col_tipo, QTableWidgetItem(novos_dados["tipo_registro"]))
+                self.table.setItem(selected_row, col_registro, QTableWidgetItem(novos_dados["registro"]))
+                self.table.setItem(selected_row, col_nome, QTableWidgetItem(novos_dados["nome"]))
+
+                # Atualiza no banco de dados
+                fiscal_nome = self.user_info["username"]
+                sanitized_fiscal = fiscal_nome.replace(" ", "_").lower()
+                table_name = f"procedimentos_{sanitized_fiscal}"
+
+                conn = connect_db()
+                cursor = conn.cursor()
+
+                cursor.execute(f"""
+                    UPDATE {table_name}
+                    SET data_conclusao = ?, numero_agendamento = ?, tipo_registro = ?, numero_registro = ?, nome = ?
+                    WHERE numero_agendamento = ? AND procedimento = ?
+                """, (
+                    novos_dados["data_conclusao"],
+                    novos_dados["numero_agendamento"],
+                    novos_dados["tipo_registro"],
+                    novos_dados["registro"],  # Esse campo corresponde à coluna 'numero_registro' no banco
+                    novos_dados["nome"],
+                    numero_agendamento,  # WHERE antigo numero_agendamento
+                    procedimento  # WHERE procedimento
+                ))
+
+                conn.commit()
+                conn.close()
+
+                # Registrar log
+                detalhes = (
+                    f"Agendamento: {numero_agendamento} → {novos_dados['numero_agendamento']}, "
+                    f"Data: {data_conclusao} → {novos_dados['data_conclusao']}, "
+                    f"Tipo: {tipo_registro} → {novos_dados['tipo_registro']}, "
+                    f"Registro: {registro} → {novos_dados['registro']}, "
+                    f"Nome: {nome} → {novos_dados['nome']}"
+                )
+                registrar_log(self.user_info["username"], "Edição de Dados do Agendamento", detalhes)
+
+                QMessageBox.information(self, "Sucesso", "Dados do agendamento atualizados com sucesso!")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao editar dados do agendamento:\n{str(e)}")
+
+
+class EditAgendamentoDialog(QDialog):
+    def __init__(self, data_conclusao, numero_agendamento, tipo_registro, registro, nome, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Editar Dados do Agendamento")
+        self.setFixedSize(400, 300)
+
+        layout = QVBoxLayout()
+
+        # Campos
+        self.data_input = QLineEdit(data_conclusao)
+        self.numero_input = QLineEdit(numero_agendamento)
+        self.tipo_input = QLineEdit(tipo_registro)
+        self.registro_input = QLineEdit(registro)
+        self.nome_input = QLineEdit(nome)
+
+        # Adiciona ao layout
+        layout.addWidget(QLabel("Data de Conclusão (dd-mm-aaaa):"))
+        layout.addWidget(self.data_input)
+
+        layout.addWidget(QLabel("Número do Agendamento:"))
+        layout.addWidget(self.numero_input)
+
+        layout.addWidget(QLabel("Tipo de Registro:"))
+        layout.addWidget(self.tipo_input)
+
+        layout.addWidget(QLabel("Registro:"))
+        layout.addWidget(self.registro_input)
+
+        layout.addWidget(QLabel("Nome:"))
+        layout.addWidget(self.nome_input)
+
+        # Botões
+        button_layout = QHBoxLayout()
+        self.save_button = QPushButton("Salvar")
+        self.cancel_button = QPushButton("Cancelar")
+
+        self.save_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        button_layout.addWidget(self.save_button)
+        button_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+
+    def get_data(self):
+        return {
+            "data_conclusao": self.data_input.text().strip(),
+            "numero_agendamento": self.numero_input.text().strip(),
+            "tipo_registro": self.tipo_input.text().strip(),
+            "registro": self.registro_input.text().strip(),
+            "nome": self.nome_input.text().strip()
+        }
+
 
 
 
