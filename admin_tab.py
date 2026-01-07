@@ -14,6 +14,7 @@ from db import (
 from db import connect_db
 
 
+
 class ModernDialog(QDialog):
     """Base para diálogos com estilo moderno"""
 
@@ -120,8 +121,9 @@ class ModernDialog(QDialog):
 
 
 class AdminTab(QWidget):
-    def __init__(self, resultados_fiscal_tab=None, resultado_mensal_tab=None, resultado_mensal_crcdf_tab=None, main_app=None):
+    def __init__(self,relatorio_atribuicoes_tab=None, resultados_fiscal_tab=None, resultado_mensal_tab=None, resultado_mensal_crcdf_tab=None, main_app=None):
         super().__init__()
+        self.relatorio_atribuicoes_tab = relatorio_atribuicoes_tab
         self.resultados_fiscal_tab = resultados_fiscal_tab
         self.resultado_mensal_tab = resultado_mensal_tab
         self.resultado_mensal_crcdf_tab = resultado_mensal_crcdf_tab
@@ -573,7 +575,7 @@ class AdminTab(QWidget):
         senha_digitada = dialog.get_password()
 
         try:
-            conn = sqlite3.connect("r'\\192.168.0.120\BancoSiaFisk\application.db'")
+            conn = sqlite3.connect(r'\\192.168.0.120\BancoSiaFisk\application.db')
             cursor = conn.cursor()
             cursor.execute("SELECT password FROM users WHERE is_admin = 1")
             senhas = [row[0] for row in cursor.fetchall()]
@@ -636,33 +638,42 @@ class AdminTab(QWidget):
         except sqlite3.IntegrityError:
             QMessageBox.critical(self, "Erro", f"O usuário '{username}' já existe!")
 
-
     def exportar_relatorios_escolhidos(self):
-
         dialog = ExportSelectionDialog(self)
         if dialog.exec_():
             selecionado = dialog.get_selection()
 
-            if selecionado["fiscal"]:
+            if selecionado["atribuicoes"]:
+                if self.relatorio_atribuicoes_tab:
+                    self.relatorio_atribuicoes_tab.exportar_pdf_excel()
+                else:
+                    QMessageBox.warning(self, "Erro",
+                                        "A aba 'Relatório de Atribuições' não está carregada.")
 
+            if selecionado["fiscal"]:
                 if self.resultados_fiscal_tab:
                     self.resultados_fiscal_tab.exportar_pdf_excel()
                 else:
                     QMessageBox.warning(self, "Erro", "A aba 'Resultados do Fiscal' não está carregada.")
 
             if selecionado["mensal"]:
-
                 if self.resultado_mensal_tab:
                     self.resultado_mensal_tab.exportar_pdf_excel()
                 else:
                     QMessageBox.warning(self, "Erro", "A aba 'Resultado Mensal' não está carregada.")
 
             if selecionado["crcdf"]:
-
                 if self.resultado_mensal_crcdf_tab:
                     self.resultado_mensal_crcdf_tab.exportar_pdf_excel()
                 else:
                     QMessageBox.warning(self, "Erro", "A aba 'Resultado Mensal - CRCDF' não está carregada.")
+
+            # ✅ Novo: Exportar Relatório de Atribuições
+            if hasattr(self, "relatorio_atribuicoes_tab") and self.relatorio_atribuicoes_tab:
+                try:
+                    self.relatorio_atribuicoes_tab.exportar_pdf_excel()
+                except Exception as e:
+                    QMessageBox.warning(self, "Erro", f"Erro ao exportar Relatório de Atribuições:\n{e}")
 
     def zerar_dados_procedimentos(self):
         if not self.verificar_senha_admin():
@@ -823,30 +834,35 @@ class ExportSelectionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Escolher Abas para Exportar")
-        self.setFixedSize(300, 200)
+        self.setFixedSize(300, 250)              # ↑ um pouco mais alto
 
         layout = QVBoxLayout(self)
-        self.chk_fiscal = QCheckBox("Resultados do Fiscal")
-        self.chk_mensal = QCheckBox("Resultado Mensal - CFC")
-        self.chk_crcdf = QCheckBox("Resultado Mensal - CRCDF")
-        self.chk_fiscal.setChecked(True)
-        self.chk_mensal.setChecked(True)
-        self.chk_crcdf.setChecked(True)
 
-        layout.addWidget(self.chk_fiscal)
-        layout.addWidget(self.chk_mensal)
-        layout.addWidget(self.chk_crcdf)
+        # ✔️ NOVA ABA
+        self.chk_atribuicoes = QCheckBox("Relatório de Atribuições")
+        self.chk_fiscal      = QCheckBox("Resultados do Fiscal")
+        self.chk_mensal      = QCheckBox("Resultado Mensal - CFC")
+        self.chk_crcdf       = QCheckBox("Resultado Mensal - CRCDF")
+
+        # Deixe os que quiser pré-marcados
+        for chk in (self.chk_atribuicoes, self.chk_fiscal,
+                    self.chk_mensal, self.chk_crcdf):
+            chk.setChecked(True)
+            layout.addWidget(chk)
 
         btn = QPushButton("Exportar")
         btn.clicked.connect(self.accept)
         layout.addWidget(btn)
 
     def get_selection(self):
+        """Retorna quais abas o usuário escolheu exportar."""
         return {
-            "fiscal": self.chk_fiscal.isChecked(),
-            "mensal": self.chk_mensal.isChecked(),
-            "crcdf": self.chk_crcdf.isChecked()
+            "atribuicoes": self.chk_atribuicoes.isChecked(),
+            "fiscal":      self.chk_fiscal.isChecked(),
+            "mensal":      self.chk_mensal.isChecked(),
+            "crcdf":       self.chk_crcdf.isChecked()
         }
+
 
 
 class AdminPasswordDialog(QDialog):

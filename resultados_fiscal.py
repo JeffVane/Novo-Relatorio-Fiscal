@@ -1,11 +1,17 @@
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
-                             QPushButton, QDialog, QLineEdit, QListWidget, QDialogButtonBox, QListWidgetItem,
-                             QMessageBox, QMenu)
-from PyQt5.QtGui import QFont,QColor
-from PyQt5.QtCore import Qt
+# -------------------- IMPORTAÇÕES --------------------
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
+    QPushButton, QDialog, QLineEdit, QListWidget, QDialogButtonBox,
+    QListWidgetItem, QMessageBox, QMenu, QApplication, QAbstractItemView,
+    QShortcut,QHBoxLayout,QComboBox
+)
+from PyQt5.QtGui import QFont, QColor, QKeySequence
+from PyQt5.QtCore import Qt, pyqtSignal
+# -----------------------------------------------------
 from db import connect_db
 from unidecode import unidecode
 import re
+
 from db import registrar_log
 import re
 from PyQt5.QtCore import pyqtSignal
@@ -28,8 +34,36 @@ class ResultadosFiscalTab(QWidget):
         self.title_label = QLabel("📊Resultados do Fiscal")
         self.title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;")
         layout.addWidget(self.title_label)
+        # 🔹 ADICIONE - Seletor de Ano
+        year_layout = QHBoxLayout()
+        year_layout.addWidget(QLabel("Ano:"))
+        self.year_combo = QComboBox()
+        self.year_combo.addItems(["2026", "2025", "2024", "2023"])
+        self.year_combo.setCurrentText("2026")
+        self.year_combo.currentTextChanged.connect(self.load_data)
+        year_layout.addWidget(self.year_combo)
+        year_layout.addStretch()
+        layout.addLayout(year_layout)
 
         self.table = GrupoTableWidget(toggle_callback=self.toggle_expand)
+
+        # ---- habilita seleção/foco/atalhos para copiar ----
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        if self.user_info.get("is_admin", False):
+            # permite editar (mas só as células que você marcar como Editable)
+            self.table.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked |
+                QAbstractItemView.EditTrigger.SelectedClicked |
+                QAbstractItemView.EditTrigger.EditKeyPressed
+            )
+        else:
+            self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # recebe foco de teclado
+        QShortcut(QKeySequence("Ctrl+C"), self.table, self.copiar_tabela_para_clipboard)
+        # ---------------------------------------------------
+
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.custom_context_menu)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -143,6 +177,9 @@ class ResultadosFiscalTab(QWidget):
             self.bloquear_sinal = False
             return
 
+        # 🔹 ADICIONE logo no início
+        ano_selecionado = self.year_combo.currentText()
+
         grupo_nome = re.sub(r"^[🔽🔼]\s*", "", item.text().strip())
 
         if self.grupo_linhas.get(grupo_nome):
@@ -217,8 +254,9 @@ class ResultadosFiscalTab(QWidget):
                             """, (proc.strip().upper(),))
                             resultado = cursor.fetchall()
                             peso = pesos.get(id_map.get(proc.strip().upper()), 1)
-                            total_fiscal = sum(r[0] * peso for r in resultado if r[0] is not None)
-                            item_cell.setText(str(total_fiscal))
+                            total_proc += sum(r[0] for r in resultado if
+                                              r[0] is not None and len(r) > 1 and r[1].endswith(ano_selecionado))
+                            item_cell.setText(str(total_proc))
                         except Exception as e:
                             print(f"[ERRO FISCAL] {e}")
                         item_cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
@@ -287,43 +325,72 @@ class ResultadosFiscalTab(QWidget):
 
     def verificar_alteracao_meta(self, row, column):
         if self.bloquear_sinal:
-            print("[INFO] Sinal bloqueado, ignorando alteração.")
             return
 
-        if column not in [1, 2]:
+        # só permite editar metas
+        if column not in (1, 2):
             return
 
         try:
+            ano_selecionado = int(self.year_combo.currentText())
+
             item_nome = self.table.item(row, 0)
             item_valor = self.table.item(row, column)
 
             if not item_nome or not item_valor:
-                print("[ERRO] Célula vazia.")
                 return
 
-            nome_exibido = item_nome.text()
-            nome_proc = re.sub(r"^[🔽🔼]\s*", "", nome_exibido.strip())
-            nova_meta = item_valor.text()
+            nome_exibido = item_nome.text().strip()
+            nome_proc = re.sub(r"^[🔽🔼]\s*", "", nome_exibido).strip()
 
-            if not nova_meta.isdigit():
+            # ignora linha total
+            if nome_proc.upper() == "TOTAL":
+                return
+
+            nova_meta_txt = item_valor.text().strip()
+            if not nova_meta_txt.isdigit():
                 QMessageBox.warning(self, "Valor inválido", "Digite um valor numérico inteiro.")
+                self.table.blockSignals(True)
+                self.load_data()
+                self.table.blockSignals(False)
                 return
 
-            nova_meta_valor = int(nova_meta)
+            nova_meta_valor = int(nova_meta_txt)
             tipo_meta = "Meta Anual" if column == 1 else "Meta+%CRCDF"
 
             confirmacao = QMessageBox.question(
                 self,
                 "Confirmar alteração",
-                f"Deseja realmente alterar a {tipo_meta} de '{nome_proc}' para {nova_meta}?",
+                f"Deseja realmente alterar a {tipo_meta} de '{nome_proc}' para {nova_meta_valor} no ano {ano_selecionado}?",
                 QMessageBox.Yes | QMessageBox.No
             )
 
             if confirmacao != QMessageBox.Yes:
+                self.table.blockSignals(True)
+                self.load_data()
+                self.table.blockSignals(False)
                 return
 
             conn = connect_db()
             cursor = conn.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON;")
+
+            def upsert_meta(procedure_id: int, ano: int, meta_cfc=None, meta_crcdf=None):
+                # Atualiza apenas a coluna que mudou, mantendo a outra
+                if meta_cfc is not None:
+                    cursor.execute("""
+                        INSERT INTO metas_anuais (procedure_id, ano, meta_cfc)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(procedure_id, ano)
+                        DO UPDATE SET meta_cfc = excluded.meta_cfc
+                    """, (procedure_id, ano, meta_cfc))
+                if meta_crcdf is not None:
+                    cursor.execute("""
+                        INSERT INTO metas_anuais (procedure_id, ano, meta_crcdf)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(procedure_id, ano)
+                        DO UPDATE SET meta_crcdf = excluded.meta_crcdf
+                    """, (procedure_id, ano, meta_crcdf))
 
             if nome_proc in self.grupos:
                 procedimentos = self.grupos[nome_proc]
@@ -332,27 +399,41 @@ class ResultadosFiscalTab(QWidget):
                     raise ValueError("Grupo sem procedimentos.")
 
                 base = nova_meta_valor // qtd
-                restante = nova_meta_valor % qtd
+                resto = nova_meta_valor % qtd
 
-                for i, proc in enumerate(procedimentos):
-                    meta_individual = base + (1 if i < restante else 0)
+                for i, proc_name in enumerate(procedimentos):
+                    meta_individual = base + (1 if i < resto else 0)
+
+                    cursor.execute("SELECT id FROM procedures WHERE name = ?", (proc_name,))
+                    r = cursor.fetchone()
+                    if not r:
+                        continue
+                    proc_id = r[0]
+
                     if column == 1:
-                        cursor.execute("UPDATE procedures SET meta_cfc = ? WHERE name = ?", (meta_individual, proc))
+                        upsert_meta(proc_id, ano_selecionado, meta_cfc=meta_individual)
                     else:
-                        cursor.execute("UPDATE procedures SET meta_crcdf = ? WHERE name = ?", (meta_individual, proc))
+                        upsert_meta(proc_id, ano_selecionado, meta_crcdf=meta_individual)
+
             else:
+                cursor.execute("SELECT id FROM procedures WHERE name = ?", (nome_proc,))
+                r = cursor.fetchone()
+                if not r:
+                    raise ValueError(f"Procedimento não encontrado: {nome_proc}")
+                proc_id = r[0]
+
                 if column == 1:
-                    cursor.execute("UPDATE procedures SET meta_cfc = ? WHERE name = ?", (nova_meta_valor, nome_proc))
+                    upsert_meta(proc_id, ano_selecionado, meta_cfc=nova_meta_valor)
                 else:
-                    cursor.execute("UPDATE procedures SET meta_crcdf = ? WHERE name = ?", (nova_meta_valor, nome_proc))
+                    upsert_meta(proc_id, ano_selecionado, meta_crcdf=nova_meta_valor)
 
             conn.commit()
             conn.close()
 
             self.table.blockSignals(True)
             self.load_data()
-            self.metas_atualizadas.emit()
             self.table.blockSignals(False)
+            self.metas_atualizadas.emit()
 
         except Exception as e:
             import traceback
@@ -364,9 +445,23 @@ class ResultadosFiscalTab(QWidget):
         try:
             conn = connect_db()
             cursor = conn.cursor()
+            # 🔹 Obtém o ano selecionado
+            ano_selecionado = self.year_combo.currentText()
 
             # Procedimentos e metas
-            cursor.execute("SELECT id, name, meta_cfc, meta_crcdf FROM procedures WHERE name != 'CANCELADO'")
+            cursor.execute("""
+                SELECT 
+                    p.id,
+                    p.name,
+                    COALESCE(ma.meta_cfc, p.meta_cfc, 0) AS meta_cfc,
+                    COALESCE(ma.meta_crcdf, p.meta_crcdf, 0) AS meta_crcdf
+                FROM procedures p
+                LEFT JOIN metas_anuais ma
+                    ON ma.procedure_id = p.id
+                    AND ma.ano = ?
+                WHERE p.name != 'CANCELADO'
+            """, (int(ano_selecionado),))
+
             procedimentos_raw = cursor.fetchall()
             procedimento_ids = {row[1].strip().upper(): row[0] for row in procedimentos_raw}
             metas_cfc = {row[1].strip().upper(): row[2] for row in procedimentos_raw}
@@ -430,16 +525,22 @@ class ResultadosFiscalTab(QWidget):
                 meta_cfc = sum(metas_cfc.get(p.upper(), 0) for p in procedimentos)
                 meta_crcdf = sum(metas_crcdf.get(p.upper(), 0) for p in procedimentos)
 
-                # Meta CFC
+                # Meta CFC - 🔹 CORRIGIDO: Permite edição para admin
                 item_cfc = QTableWidgetItem(str(meta_cfc))
                 item_cfc.setTextAlignment(Qt.AlignCenter)
-                item_cfc.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | (Qt.ItemIsEditable if is_admin else 0))
+                if is_admin:
+                    item_cfc.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                else:
+                    item_cfc.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(row, 1, item_cfc)
 
-                # Meta CRCDF
+                # Meta CRCDF - 🔹 CORRIGIDO: Permite edição para admin
                 item_crcdf = QTableWidgetItem(str(meta_crcdf))
                 item_crcdf.setTextAlignment(Qt.AlignCenter)
-                item_crcdf.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | (Qt.ItemIsEditable if is_admin else 0))
+                if is_admin:
+                    item_crcdf.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable)
+                else:
+                    item_crcdf.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(row, 2, item_crcdf)
 
                 # Resultados por fiscal
@@ -449,13 +550,22 @@ class ResultadosFiscalTab(QWidget):
                     tabela_nome = f"procedimentos_{fiscal.lower()}"
                     if tabela_existe(tabela_nome):
                         for proc in procedimentos:
+                            # 🔹 CORRIGIDO: Agora busca também a data_conclusao para filtrar por ano
                             cursor.execute(f"""
-                                SELECT quantidade FROM {tabela_nome}
+                                SELECT quantidade, data_conclusao FROM {tabela_nome}
                                 WHERE UPPER(TRIM(procedimento)) = ?
                             """, (proc.upper(),))
                             resultado = cursor.fetchall()
                             peso = pesos.get(procedimento_ids.get(proc.upper(), -1), 1)
-                            total_fiscal += sum(row[0] * peso for row in resultado if row[0] is not None)
+
+                            # 🔹 Filtra por ano selecionado
+                            for r in resultado:
+                                if r[0] is not None and len(r) > 1:
+                                    data_conclusao = r[1]
+                                    # Verifica se a data termina com o ano selecionado (formato dd-mm-yyyy)
+                                    if ano_selecionado in str(data_conclusao):
+                                        total_fiscal += r[0] * peso
+
                     totais_fiscais[fiscal] = total_fiscal
 
                     item_fiscal = QTableWidgetItem(str(total_fiscal))
@@ -470,13 +580,20 @@ class ResultadosFiscalTab(QWidget):
                         total_proc = 0
                         for fiscal in self.fiscais:
                             tabela = f"procedimentos_{fiscal.lower()}"
+                            if not tabela_existe(tabela):
+                                continue
                             try:
+                                # 🔹 CORRIGIDO: Busca data_conclusao
                                 cursor.execute(f"""
-                                    SELECT quantidade FROM '{tabela}'
+                                    SELECT quantidade, data_conclusao FROM '{tabela}'
                                     WHERE UPPER(TRIM(procedimento)) = ?
                                 """, (proc.strip().upper(),))
                                 resultado = cursor.fetchall()
-                                total_proc += sum(r[0] for r in resultado)
+
+                                # 🔹 Filtra por ano
+                                for r in resultado:
+                                    if r[0] is not None and len(r) > 1 and ano_selecionado in str(r[1]):
+                                        total_proc += r[0]
                             except Exception as e:
                                 print(f"[ERRO SQL] {e}")
 
@@ -491,14 +608,19 @@ class ResultadosFiscalTab(QWidget):
 
                         try:
                             for proc in procedimentos:
+                                # 🔹 CORRIGIDO: Busca data_conclusao
                                 cursor.execute(f"""
-                                    SELECT quantidade FROM '{tabela}'
+                                    SELECT quantidade, data_conclusao FROM '{tabela}'
                                     WHERE UPPER(TRIM(procedimento)) = ?
                                 """, (proc.strip().upper(),))
                                 resultado = cursor.fetchall()
                                 proc_id = procedimento_ids.get(proc.strip().upper())
                                 peso = pesos.get(proc_id, 1)
-                                total_realizado += sum(q[0] * peso for q in resultado if q[0] is not None)
+
+                                # 🔹 Filtra por ano
+                                for q in resultado:
+                                    if q[0] is not None and len(q) > 1 and ano_selecionado in str(q[1]):
+                                        total_realizado += q[0] * peso
                         except Exception as e:
                             print(f"[ERRO SQL - procedimento '{proc}'] na tabela '{tabela}': {e}")
 
@@ -559,7 +681,9 @@ class ResultadosFiscalTab(QWidget):
                     item = self.table.item(row, col)
                     if item:
                         try:
-                            total += float(item.text().replace(",", "."))
+                            # Remove texto extra como "(Concluído X a mais)"
+                            texto = item.text().split("(")[0].strip()
+                            total += float(texto.replace(",", "."))
                         except ValueError:
                             pass
 
@@ -576,6 +700,8 @@ class ResultadosFiscalTab(QWidget):
 
         except Exception as e:
             print(f"[ERROR] Erro ao carregar dados: {e}")
+            import traceback
+            print(traceback.format_exc())
         finally:
             self.bloquear_sinal = False
 
@@ -588,13 +714,24 @@ class ResultadosFiscalTab(QWidget):
             conn = connect_db()
             cursor = conn.cursor()
 
+            ano_selecionado = int(self.year_combo.currentText())
+
+            # Garante FK no SQLite (boa prática)
+            cursor.execute("PRAGMA foreign_keys = ON;")
+
             for row in range(self.table.rowCount()):
-                nome_exibido = self.table.item(row, 0).text()
-                nome_proc = nome_exibido.strip()
+                item_nome = self.table.item(row, 0)
+                if not item_nome:
+                    continue
 
+                nome_exibido = item_nome.text().strip()
 
+                # Ignora linha TOTAL
+                if nome_exibido.upper() == "TOTAL":
+                    continue
 
-
+                # Remove o prefixo do grupo "🔽 "
+                nome_proc = nome_exibido.replace("🔽", "").strip()
 
                 try:
                     meta_cfc = int(self.table.item(row, 1).text())
@@ -603,38 +740,89 @@ class ResultadosFiscalTab(QWidget):
                     print(f"[AVISO] Valores inválidos ou ausentes para: {nome_proc}")
                     continue
 
-                # Verifica se é um grupo
+                # Se é grupo, divide meta entre os procedimentos do grupo
                 if nome_proc in self.grupos:
                     procedimentos = self.grupos[nome_proc]
                     qtd = len(procedimentos)
                     if qtd == 0:
                         continue
-                    meta_cfc_individual = meta_cfc // qtd
-                    meta_crcdf_individual = meta_crcdf // qtd
-                    for procedimento in procedimentos:
-                        cursor.execute(
-                            "UPDATE procedures SET meta_cfc = ?, meta_crcdf = ? WHERE name = ?",
-                            (meta_cfc_individual, meta_crcdf_individual, procedimento)
-                        )
+
+                    base_cfc = meta_cfc // qtd
+                    resto_cfc = meta_cfc % qtd
+
+                    base_crcdf = meta_crcdf // qtd
+                    resto_crcdf = meta_crcdf % qtd
+
+                    for i, procedimento in enumerate(procedimentos):
+                        # distribui o "resto" 1 a 1 nos primeiros
+                        meta_cfc_ind = base_cfc + (1 if i < resto_cfc else 0)
+                        meta_crcdf_ind = base_crcdf + (1 if i < resto_crcdf else 0)
+
+                        cursor.execute("SELECT id FROM procedures WHERE name = ?", (procedimento,))
+                        row_id = cursor.fetchone()
+                        if not row_id:
+                            print(f"[AVISO] Procedimento não encontrado no banco: {procedimento}")
+                            continue
+                        procedure_id = row_id[0]
+
+                        cursor.execute("""
+                            INSERT INTO metas_anuais (procedure_id, ano, meta_cfc, meta_crcdf)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(procedure_id, ano)
+                            DO UPDATE SET
+                                meta_cfc = excluded.meta_cfc,
+                                meta_crcdf = excluded.meta_crcdf
+                        """, (procedure_id, ano_selecionado, meta_cfc_ind, meta_crcdf_ind))
+
                 else:
-                    cursor.execute(
-                        "UPDATE procedures SET meta_cfc = ?, meta_crcdf = ? WHERE name = ?",
-                        (meta_cfc, meta_crcdf, nome_proc)
-                    )
+                    # Procedimento individual
+                    cursor.execute("SELECT id FROM procedures WHERE name = ?", (nome_proc,))
+                    row_id = cursor.fetchone()
+                    if not row_id:
+                        print(f"[AVISO] Procedimento não encontrado no banco: {nome_proc}")
+                        continue
+                    procedure_id = row_id[0]
+
+                    cursor.execute("""
+                        INSERT INTO metas_anuais (procedure_id, ano, meta_cfc, meta_crcdf)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(procedure_id, ano)
+                        DO UPDATE SET
+                            meta_cfc = excluded.meta_cfc,
+                            meta_crcdf = excluded.meta_crcdf
+                    """, (procedure_id, ano_selecionado, meta_cfc, meta_crcdf))
 
             conn.commit()
             conn.close()
-            QMessageBox.information(self, "Sucesso", "Metas salvas com sucesso!")
-            print("[SUCESSO] Metas atualizadas com sucesso.")
-            # Emitir o sinal de atualização de metas
+
+            QMessageBox.information(self, "Sucesso", f"Metas do ano {ano_selecionado} salvas com sucesso!")
+            print("[SUCESSO] Metas anuais atualizadas com sucesso.")
             self.metas_atualizadas.emit()
 
+            # Recarrega para refletir COALESCE/ano
+            self.load_data()
+
         except Exception as e:
-            print(f"[ERRO] Falha ao salvar metas: {e}")
-            QMessageBox.critical(self, "Erro", f"Falha ao salvar metas:\n{e}")
+            print(f"[ERRO] Falha ao salvar metas anuais: {e}")
+            import traceback
+            print(traceback.format_exc())
+            QMessageBox.critical(self, "Erro", f"Falha ao salvar metas anuais:\n{e}")
 
+    def copiar_tabela_para_clipboard(self):
+        """Copia a seleção atual da tabela para a área de transferência em formato tabulado."""
+        ranges = self.table.selectedRanges()
+        if not ranges:
+            return
 
-
+        linhas_texto = []
+        for r in ranges:
+            for row in range(r.topRow(), r.bottomRow() + 1):
+                col_texto = []
+                for col in range(r.leftColumn(), r.rightColumn() + 1):
+                    item = self.table.item(row, col)
+                    col_texto.append(item.text() if item else "")
+                linhas_texto.append("\t".join(col_texto))
+        QApplication.clipboard().setText("\n".join(linhas_texto).strip())
 
     def format_table(self):
         self.table.setAlternatingRowColors(True)

@@ -17,44 +17,84 @@ import ctypes
 import sys
 from PyQt5.QtWidgets import QApplication, QMessageBox, QProgressDialog
 from PyQt5.QtCore import QEventLoop
+from packaging.version import Version, InvalidVersion
 
 
-
-# Configurações
+# ---------------- Configurações ----------------
 REPO_OWNER = "JeffVane"
 REPO_NAME = "Novo-Relatorio-Fiscal"
 BRANCH = "main"
+
 VERSION_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/version.txt"
-INSTALLER_URL = "https://github.com/JeffVane/Novo-Relatorio-Fiscal/releases/download/v1.1.1/Instalador_RelatorioFiscal.exe"
 LOCAL_VERSION_FILE = "version.txt"
+
+# GitHub API (latest release)
+LATEST_RELEASE_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+
+# Nome do instalador que você sobe no Release
+INSTALLER_ASSET_NAME = "Instalador_RelatorioFiscal.exe"
+# ----------------------------------------------
 
 
 def get_remote_version():
     try:
-        return requests.get(VERSION_URL).text.strip()
+        r = requests.get(VERSION_URL, timeout=10)
+        r.raise_for_status()
+        return r.text.strip()
     except:
         return None
 
+
 def get_local_version():
     try:
-        with open(LOCAL_VERSION_FILE, "r") as f:
+        with open(LOCAL_VERSION_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     except:
         return "0.0.0"
+
+
+def parse_version(v: str) -> Version:
+    # garante comparação correta (1.10.0 > 1.2.0)
+    try:
+        return Version(v.strip())
+    except InvalidVersion:
+        # se vier algo estranho no version.txt, evita crash
+        return Version("0.0.0")
+
+
+def get_latest_installer_url():
+    """
+    Busca o último release e encontra a URL do asset do instalador.
+    """
+    r = requests.get(LATEST_RELEASE_API, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+
+    assets = data.get("assets", [])
+    for a in assets:
+        if a.get("name") == INSTALLER_ASSET_NAME:
+            return a.get("browser_download_url")
+
+    raise RuntimeError(f"Asset '{INSTALLER_ASSET_NAME}' não encontrado no Latest Release.")
+
 
 class DownloadThread(QThread):
     progress_update = pyqtSignal(int, float, float)
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
+    def __init__(self, download_url: str, parent=None):
+        super().__init__(parent)
+        self.download_url = download_url
+
     def run(self):
         try:
             temp_dir = tempfile.gettempdir()
-            installer_path = os.path.join(temp_dir, "Instalador_RelatorioFiscal.exe")
+            installer_path = os.path.join(temp_dir, INSTALLER_ASSET_NAME)
 
-            with requests.get(INSTALLER_URL, stream=True) as r:
+            with requests.get(self.download_url, stream=True, timeout=30) as r:
                 r.raise_for_status()
-                total = int(r.headers.get('content-length', 0))
+                total = int(r.headers.get("content-length", 0))
                 downloaded = 0
                 chunk_size = 2 * 1024 * 1024  # 2 MB
 
@@ -63,10 +103,12 @@ class DownloadThread(QThread):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
-                            percent = int((downloaded / total) * 100)
-                            mb_downloaded = downloaded / (1024 * 1024)
-                            mb_total = total / (1024 * 1024)
-                            self.progress_update.emit(percent, mb_downloaded, mb_total)
+
+                            if total > 0:
+                                percent = int((downloaded / total) * 100)
+                                mb_downloaded = downloaded / (1024 * 1024)
+                                mb_total = total / (1024 * 1024)
+                                self.progress_update.emit(percent, mb_downloaded, mb_total)
 
             self.finished.emit(installer_path)
 
@@ -74,66 +116,77 @@ class DownloadThread(QThread):
             self.error.emit(str(e))
 
 
-
-
 def verificar_atualizacao():
-    remote = get_remote_version()
-    local = get_local_version()
+    remote_txt = get_remote_version()
+    local_txt = get_local_version()
 
-    if remote and remote != local:
-        if not QApplication.instance():
-            _ = QApplication(sys.argv)
+    if not remote_txt:
+        return False  # sem internet / sem version.txt
 
-        resposta = QMessageBox.question(
-            None,
-            "Atualização disponível",
-            f"Uma nova versão do sistema está disponível!\n\n"
-            f"Versão atual: {local}\nNova versão: {remote}\n\n"
-            f"Deseja baixar e instalar agora?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
+    remote = parse_version(remote_txt)
+    local = parse_version(local_txt)
 
-        if resposta == QMessageBox.Yes:
-            progress = QProgressDialog("Preparando download...", "Cancelar", 0, 100)
-            progress.setWindowTitle("Baixando Atualização")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setMinimumWidth(400)
-            progress.setValue(0)
-            progress.show()
+    # Só atualiza se for realmente maior
+    if remote <= local:
+        return False
 
-            thread = DownloadThread()
+    if not QApplication.instance():
+        _ = QApplication(sys.argv)
 
-            def atualizar_barra(percent, mb_down, mb_total):
-                progress.setValue(percent)
-                progress.setLabelText(f"Baixando: {mb_down:.1f} MB de {mb_total:.1f} MB")
+    resposta = QMessageBox.question(
+        None,
+        "Atualização disponível",
+        f"Uma nova versão do sistema está disponível!\n\n"
+        f"Versão atual: {local}\nNova versão: {remote}\n\n"
+        f"Deseja baixar e instalar agora?",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.Yes
+    )
 
-            def ao_finalizar(caminho):
-                progress.close()
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", caminho, None, None, 1)
-                sys.exit(0)  # Termina para deixar o instalador continuar
+    if resposta != QMessageBox.Yes:
+        return False
 
-            def ao_errar(mensagem):
-                progress.close()
-                QMessageBox.critical(None, "Erro", f"Erro ao baixar instalador:\n{mensagem}")
-                loop.quit()
+    try:
+        installer_url = get_latest_installer_url()
+    except Exception as e:
+        QMessageBox.critical(None, "Erro", f"Não foi possível localizar o instalador no GitHub Releases:\n{e}")
+        return False
 
-            thread.progress_update.connect(atualizar_barra)
-            thread.finished.connect(ao_finalizar)
-            thread.error.connect(ao_errar)
+    progress = QProgressDialog("Preparando download...", "Cancelar", 0, 100)
+    progress.setWindowTitle("Baixando Atualização")
+    progress.setWindowModality(Qt.WindowModal)
+    progress.setMinimumWidth(420)
+    progress.setValue(0)
+    progress.show()
 
-            # ✅ Espera o fim da thread antes de continuar
-            loop = QEventLoop()
-            thread.finished.connect(loop.quit)
-            thread.error.connect(loop.quit)
+    thread = DownloadThread(installer_url)
 
-            thread.start()
-            loop.exec_()
+    def atualizar_barra(percent, mb_down, mb_total):
+        progress.setValue(percent)
+        progress.setLabelText(f"Baixando: {mb_down:.1f} MB de {mb_total:.1f} MB")
 
-            return True  # Atualizou
+    def ao_finalizar(caminho):
+        progress.close()
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", caminho, None, None, 1)
+        sys.exit(0)
 
-    return False  # Não atualizou
+    def ao_errar(mensagem):
+        progress.close()
+        QMessageBox.critical(None, "Erro", f"Erro ao baixar instalador:\n{mensagem}")
+        loop.quit()
 
+    thread.progress_update.connect(atualizar_barra)
+    thread.finished.connect(ao_finalizar)
+    thread.error.connect(ao_errar)
+
+    loop = QEventLoop()
+    thread.finished.connect(loop.quit)
+    thread.error.connect(loop.quit)
+
+    thread.start()
+    loop.exec_()
+
+    return True
 
 
 

@@ -174,6 +174,7 @@ class MainApp(QMainWindow):
             self.pages = QStackedWidget()
             self.admin_page = AdminTab(
                 main_app=self,
+                relatorio_atribuicoes_tab=self.page_relatorio_atribuicoes,  # <- precisa existir
                 resultados_fiscal_tab=self.page_resultados_fiscal,
                 resultado_mensal_tab=self.page_resultado_mensal,
                 resultado_mensal_crcdf_tab=self.page_resultado_mensal_crcdf
@@ -208,12 +209,30 @@ class MainApp(QMainWindow):
                     self.pages.addWidget(widget)
                     self.menu_widget.menu_list.addItem(tab_name)
 
+
+
             elif self.user_info["is_visitor"]:
-                abas_visitante = ["Relatório de Atribuições", "Resultados do Fiscal", "Resultado Mensal"]
-                for tab_name in abas_visitante:
-                    if tab_name in self.all_pages:
-                        self.pages.addWidget(self.all_pages[tab_name])
-                        self.menu_widget.menu_list.addItem(tab_name)
+
+                nome_visivel = {
+
+                    "Resultado Mensal": "Resultado Mensal - CFC",
+
+                    "Resultado Mensal - CRCDF": "Resultado Mensal - CRCDF",
+
+                    "Relatório de Atribuições": "Relatório de Atribuições",
+
+                    "Resultados do Fiscal": "Resultados do Fiscal",
+
+                }
+
+                for tab_name, widget in self.all_pages.items():
+
+                    if self.permissions.get(tab_name, False):
+                        self.pages.addWidget(widget)
+
+                        self.menu_widget.menu_list.addItem(nome_visivel.get(tab_name, tab_name))
+
+
 
             else:
                 nome_visivel = {

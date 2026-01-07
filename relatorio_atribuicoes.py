@@ -4,11 +4,10 @@ from PyQt5.QtWidgets import (
     QListWidgetItem, QHBoxLayout, QScrollArea,QLabel
 )
 from PyQt5.QtCore import Qt, QPoint, QSize
-from PyQt5.QtGui import QFont, QIcon,QColor
+from PyQt5.QtGui import QFont, QIcon,QColor, QKeySequence
 from PyQt5.QtGui import QFontMetrics
-from PyQt5.QtWidgets import QToolTip
+from PyQt5.QtWidgets import QToolTip, QShortcut,QAbstractItemView,QApplication
 from PyQt5.QtGui import QPalette
-
 from db import get_assigned_procedures, get_procedures  # Importação correta
 from db import connect_db
 from datetime import datetime
@@ -193,10 +192,19 @@ class RelatorioAtribuicoesTab(QWidget):
         layout = QVBoxLayout()
 
         total_layout = QHBoxLayout()
+        # 🔹 ADICIONE - Seletor de Ano ANTES dos totais
+        year_layout = QHBoxLayout()
+        year_layout.addWidget(QLabel("Filtrar Ano:"))
+        self.year_combo = QComboBox()
+        self.year_combo.addItems(["2026", "2025", "2024", "2023", "Todos"])
+        self.year_combo.setCurrentText("2026")
+        self.year_combo.currentTextChanged.connect(self.load_data)
+        year_layout.addWidget(self.year_combo)
+        layout.addLayout(year_layout)
 
 
         # 🔹 Configuração do Tooltip para aparecer com fonte adequada
-        QToolTip.setFont(QFont("Arial", 10))  # Define o tamanho da fonte do tooltip
+        QToolTip.setFont(QFont("DejaVu", 10))  # Define o tamanho da fonte do tooltip
 
         # 🔹 Define a paleta de cores para o tooltip
         palette = QPalette()
@@ -239,6 +247,11 @@ class RelatorioAtribuicoesTab(QWidget):
         layout.addLayout(total_layout)
 
         self.table = QTableWidget()
+        # --- habilita seleção e foco para copiar ---
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)  # ou SelectItems, se preferir célula-a-célula
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # permite Shift+Cliques, Ctrl+C, etc.
+        self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # ------------------------------------------
 
         # 🔹 Define as colunas da tabela baseado no tipo de usuário
         if self.user_info.get("is_admin", False) or self.user_info.get("is_visitor", False):
@@ -261,6 +274,9 @@ class RelatorioAtribuicoesTab(QWidget):
 
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        # --- atalho Ctrl+C para copiar área selecionada ---
+        QShortcut(QKeySequence("Ctrl+C"), self.table, self.copiar_tabela_para_clipboard)
+        # -------------------------------------------------
 
         # 🔹 Determinar a posição da coluna "Quant." corretamente
         quantidade_index = 7 if (
@@ -291,6 +307,12 @@ class RelatorioAtribuicoesTab(QWidget):
 
     def load_data(self):
         """ Carrega os procedimentos atribuídos do banco de dados e exibe na tabela """
+        # 🔹 LIMPA COMPLETAMENTE OS FILTROS E DADOS AO TROCAR O ANO
+        self.active_filters.clear()
+        self.unique_column_values.clear()
+        self.data = []  # Limpa os dados atuais
+        self.original_data = []  # Limpa os dados originais
+
         try:
             if not self.user_info:
                 QMessageBox.critical(self, "Erro", "As informações do usuário não foram carregadas.")
@@ -299,8 +321,6 @@ class RelatorioAtribuicoesTab(QWidget):
             username = self.user_info["username"]
             is_admin = self.user_info["is_admin"]
             is_visitor = self.user_info["is_visitor"]
-
-            self.data = []  # 🔹 Garante que os dados serão armazenados corretamente
 
             conn = connect_db()
             cursor = conn.cursor()
@@ -321,9 +341,19 @@ class RelatorioAtribuicoesTab(QWidget):
                             cursor.execute(f"SELECT * FROM {table_name}")
                             registros = cursor.fetchall()
 
+                            # 🔹 APLICA FILTRO DE ANO
+                            ano_selecionado = self.year_combo.currentText()
+                            if ano_selecionado != "Todos":
+                                ano_int = int(ano_selecionado)
+                                registros = [
+                                    r for r in registros
+                                    if self.parse_dt(r[1]).year == ano_int
+                                ]
+
                             # Verificar se os registros têm colunas suficientes
                             if registros and len(registros[0]) < 9:
-                                print(f"[ERROR] Tabela '{table_name}' retornou um número inesperado de colunas: {len(registros[0])}")
+                                print(
+                                    f"[ERROR] Tabela '{table_name}' retornou um número inesperado de colunas: {len(registros[0])}")
                                 continue
 
                             print(f"[DEBUG] Registros encontrados para {sanitized_username}: {len(registros)}")
@@ -336,17 +366,38 @@ class RelatorioAtribuicoesTab(QWidget):
                 sanitized_username = username.replace(" ", "_").lower()
                 table_name = f"procedimentos_{sanitized_username}"
 
-                cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,)
+                )
                 if cursor.fetchone():
                     cursor.execute(f"SELECT * FROM {table_name}")
-                    self.data = cursor.fetchall()
+                    registros = cursor.fetchall()
+
+                    # 🔹 APLICA FILTRO DE ANO PARA USUÁRIO COMUM
+                    ano_selecionado = self.year_combo.currentText()
+
+                    if ano_selecionado == "Todos":
+                        self.data = registros
+                    else:
+                        ano_int = int(ano_selecionado)
+                        self.data = [
+                            r for r in registros
+                            if self.parse_dt(r[1]).year == ano_int
+                        ]
+
                     print(f"[DEBUG] Registros carregados para {username}: {len(self.data)}")
 
             conn.close()
             self.original_data = self.data[:]  # Faz uma cópia dos dados originais
 
             if not self.data:
-                QMessageBox.warning(self, "Atenção", "Nenhum procedimento atribuído encontrado.")
+                # Limpa a tabela se não houver dados
+                self.table.setRowCount(0)
+                self.total_agendamentos_label.setText("Total Agendamentos: 0")
+                self.total_procedimentos_label.setText("Total Procedimentos: 0")
+                QMessageBox.information(self, "Informação",
+                                        f"Nenhum procedimento encontrado para o ano {ano_selecionado}.")
                 return
 
             self.populate_table(self.data)  # ✅ Agora os dados são carregados corretamente
@@ -451,6 +502,23 @@ class RelatorioAtribuicoesTab(QWidget):
             self.table.setRowHeight(i, altura_fixa)
 
         self.update_agendamento_count()
+
+    def copiar_tabela_para_clipboard(self):
+        """Copia a área selecionada da tabela no formato tabulado para a área de transferência."""
+        ranges = self.table.selectedRanges()
+        if not ranges:
+            return
+
+        texto = []
+        for sel in ranges:
+            for row in range(sel.topRow(), sel.bottomRow() + 1):
+                linha = []
+                for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                    item = self.table.item(row, col)
+                    linha.append(item.text() if item else "")
+                texto.append("\t".join(linha))
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(texto).strip())
 
     def update_agendamento_count(self, filtered_values=None):
         """ Atualiza os rótulos 'Total Agendamentos' e 'Total Procedimentos', ignorando cancelados """
@@ -1048,6 +1116,169 @@ class RelatorioAtribuicoesTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao editar dados do agendamento:\n{str(e)}")
 
+    def registrar_fonte(pdf):
+        pdf.add_font("DejaVu", "", "fonts/DejaVuSans.ttf", uni=True)
+        pdf.add_font("DejaVu", "B", "fonts/DejaVuSans-Bold.ttf", uni=True)
+        pdf.add_font("DejaVu", "I", "fonts/DejaVuSans-Oblique.ttf", uni=True)
+
+    def exportar_pdf_excel(self):
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from fpdf import FPDF
+        import pandas as pd
+
+        try:
+            caminho, _ = QFileDialog.getSaveFileName(
+                self,
+                "Exportar Relatório de Atribuições",
+                "",
+                "Arquivo Excel (*.xlsx);;Arquivo PDF (*.pdf)"
+            )
+
+            if not caminho:
+                return
+
+            # Extrair dados da tabela
+            # Extrair dados da tabela
+            dados = []
+            for row in range(self.table.rowCount()):
+                linha = []
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    # Remove tabulações e outros caracteres problemáticos
+                    texto = item.text() if item else ""
+                    texto = texto.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+                    linha.append(texto)
+                dados.append(linha)
+
+            colunas = [
+                self.table.horizontalHeaderItem(i).text()
+                for i in range(self.table.columnCount())
+            ]
+
+            df = pd.DataFrame(dados, columns=colunas)
+
+            # ===================== EXCEL =====================
+            if caminho.endswith(".xlsx"):
+                df.to_excel(caminho, index=False)
+                QMessageBox.information(self, "Sucesso", "Arquivo Excel exportado com sucesso!")
+
+            # ====================== PDF ======================
+            elif caminho.endswith(".pdf"):
+
+
+
+                class PDF(FPDF):
+                    def __init__(self):
+                        super().__init__('L', 'mm', 'A4')
+                        self.set_auto_page_break(auto=True, margin=10)
+                        # Registrar todas as variações da fonte no __init__
+                        self.add_font("DejaVu", "", "fonts/DejaVuSans.ttf", uni=True)
+                        self.add_font("DejaVu", "B", "fonts/DejaVuSans-Bold.ttf", uni=True)
+                        self.add_font("DejaVu", "I", "fonts/DejaVuSans-Oblique.ttf", uni=True)
+
+                    def header(self):
+                        self.set_font("DejaVu", "B", 12)
+                        self.cell(0, 10, "Relatório de Atribuições", 0, 1, "C")
+                        self.ln(3)
+
+                    def footer(self):
+                        self.set_y(-15)
+                        self.set_font("DejaVu", "I", 8)
+                        self.cell(0, 10, f"Página {self.page_no()}", 0, 0, "C")
+
+                    def get_row_height(self, row, col_widths, line_height=6):
+                        max_lines = 1
+                        for i, cell in enumerate(row):
+                            text = str(cell)
+                            lines = self.multi_cell(
+                                col_widths[i],
+                                line_height,
+                                text,
+                                split_only=True
+                            )
+                            max_lines = max(max_lines, len(lines))
+                        return max_lines * line_height
+
+                    def render_table(self, colunas, dados, col_widths):
+                        # Cabeçalho
+                        self.set_font("DejaVu", "B", 8)
+                        self.set_fill_color(240, 240, 240)
+
+                        for i, col in enumerate(colunas):
+                            self.cell(col_widths[i], 8, col, 1, 0, 'C', True)
+                        self.ln()
+
+                        # Dados
+                        self.set_font("DejaVu", "", 8)
+
+                        for row in dados:
+                            y_start = self.get_y()
+                            row_height = self.get_row_height(row, col_widths)
+
+                            # Verifica se precisa quebrar página
+                            if y_start + row_height > self.h - 20:
+                                self.add_page()
+                                y_start = self.get_y()
+
+                            # Desenha cada célula da linha
+                            for i, cell in enumerate(row):
+                                x_pos = self.l_margin + sum(col_widths[:i])
+                                self.set_xy(x_pos, y_start)
+                                self.multi_cell(
+                                    col_widths[i],
+                                    6,
+                                    str(cell),
+                                    border=1,
+                                    align='L'
+                                )
+
+                            # Move para a próxima linha
+                            self.set_xy(self.l_margin, y_start + row_height)
+
+                def calcular_larguras(colunas, dados):
+                    temp_pdf = FPDF()
+                    temp_pdf.add_font("DejaVu", "", "fonts/DejaVuSans.ttf", uni=True)  # Registra a fonte primeiro
+                    temp_pdf.set_font("DejaVu", size=8)
+
+                    largura_total = 277  # A4 paisagem
+                    larguras = []
+
+                    for i, col in enumerate(colunas):
+                        largura = temp_pdf.get_string_width(col) + 4
+                        for row in dados:
+                            largura = max(
+                                largura,
+                                temp_pdf.get_string_width(str(row[i])) + 4
+                            )
+                        larguras.append(min(max(largura, 20), 60))
+
+                    proporcao = largura_total / sum(larguras)
+                    return [w * proporcao for w in larguras]
+
+                col_widths = calcular_larguras(colunas, dados)
+
+                pdf = PDF()
+                pdf.add_page()
+                pdf.render_table(colunas, dados, col_widths)
+                pdf.output(caminho)
+
+                QMessageBox.information(self, "Sucesso", "Arquivo PDF exportado com sucesso!")
+
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Formato inválido",
+                    "Escolha um formato válido: .xlsx ou .pdf"
+                )
+
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(
+                self,
+                "Erro",
+                f"Erro ao exportar relatório:\n{str(e)}\n\n{traceback.format_exc()}"
+            )
+
 
 class EditAgendamentoDialog(QDialog):
     def __init__(self, data_conclusao, numero_agendamento, tipo_registro, registro, nome, parent=None):
@@ -1105,103 +1336,4 @@ class EditAgendamentoDialog(QDialog):
 
 
 
-
-
-
-
-def exportar_pdf_excel(self):
-    from PyQt5.QtWidgets import QFileDialog, QMessageBox
-    from fpdf import FPDF
-
-    try:
-        caminho, _ = QFileDialog.getSaveFileName(
-            self,
-            "Exportar Relatório de Atribuições",
-            "",
-            "Arquivo Excel (*.xlsx);;Arquivo PDF (*.pdf)"
-        )
-
-        if not caminho:
-            return
-
-        # Extrair dados da tabela
-        dados = []
-        for row in range(self.table.rowCount()):
-            linha = []
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                texto = item.text() if item else ""
-                linha.append(texto)
-            dados.append(linha)
-
-        colunas = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
-        df = pd.DataFrame(dados, columns=colunas)
-
-        if caminho.endswith(".xlsx"):
-            df.to_excel(caminho, index=False)
-            QMessageBox.information(self, "Sucesso", "Arquivo Excel exportado com sucesso!")
-
-        elif caminho.endswith(".pdf"):
-            class PDF(FPDF):
-                def __init__(self):
-                    super().__init__('L', 'mm', 'A4')
-                    self.set_auto_page_break(auto=True, margin=10)
-
-                def header(self):
-                    self.set_font("Arial", "B", 12)
-                    self.cell(0, 10, "Relatório de Atribuições", 0, 1, "C")
-                    self.ln(2)
-
-                def footer(self):
-                    self.set_y(-15)
-                    self.set_font("Arial", "I", 8)
-                    self.cell(0, 10, f"Página {self.page_no()}", 0, 0, "C")
-
-                def render_table(self, colunas, dados, col_widths):
-                    self.set_fill_color(240, 240, 240)
-                    self.set_text_color(0)
-                    self.set_draw_color(200, 200, 200)
-                    self.set_font("Arial", "B", 8)
-
-                    for i, col in enumerate(colunas):
-                        self.cell(col_widths[i], 8, col, 1, 0, 'C', True)
-                    self.ln()
-
-                    self.set_font("Arial", "", 8)
-                    for row in dados:
-                        for i, cell in enumerate(row):
-                            self.multi_cell(col_widths[i], 6, str(cell), 1, 'L', False, max_line_height=6)
-                            x = self.get_x()
-                            self.set_xy(x + col_widths[i], self.get_y() - 6)
-                        self.ln()
-
-            def calcular_larguras(colunas, dados):
-                temp_pdf = FPDF()
-                temp_pdf.set_font("Arial", size=8)
-                largura_total = 277
-                larguras = []
-
-                for i, col in enumerate(colunas):
-                    largura = temp_pdf.get_string_width(col) + 4
-                    for row in dados:
-                        largura = max(largura, temp_pdf.get_string_width(str(row[i])) + 4)
-                    larguras.append(min(max(largura, 15), 60))
-
-                proporcao = largura_total / sum(larguras)
-                return [w * proporcao for w in larguras]
-
-            col_widths = calcular_larguras(colunas, dados)
-            pdf = PDF()
-            pdf.add_page()
-            pdf.render_table(colunas, dados, col_widths)
-            pdf.output(caminho)
-            QMessageBox.information(self, "Sucesso", "Arquivo PDF exportado com sucesso!")
-
-        else:
-            QMessageBox.warning(self, "Formato inválido", "Escolha um formato válido: .xlsx ou .pdf")
-
-    except Exception as e:
-        import traceback
-        erro = traceback.format_exc()
-        QMessageBox.critical(self, "Erro", f"Erro ao exportar relatório:\n{str(e)}\n\n{erro}")
 

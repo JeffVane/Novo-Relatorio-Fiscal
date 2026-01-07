@@ -1,6 +1,10 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy, QMessageBox, QFileDialog
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
+    QSizePolicy, QMessageBox, QFileDialog, QApplication, QShortcut, QAbstractItemView,QHBoxLayout,QComboBox
+)
+from PyQt5.QtGui import QColor, QKeySequence, QFont
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+
 from db import connect_db
 import pandas as pd
 import calendar
@@ -19,6 +23,18 @@ class ResultadoMensalCRCDFTab(QWidget):
         self.title = QLabel("📈Resultado Mensal - CRCDF")
         self.title.setStyleSheet("font-size: 22px; font-weight: bold;")
         layout.addWidget(self.title)
+
+        # 🔹 ADICIONE ISSO AQUI - Seletor de Ano
+        year_layout = QHBoxLayout()
+        year_layout.addWidget(QLabel("Ano:"))
+        self.year_combo = QComboBox()
+        self.year_combo.addItems(["2026", "2025", "2024", "2023"])
+        self.year_combo.setCurrentText("2026")
+        self.year_combo.currentTextChanged.connect(self.load_resultado_mensal)
+        year_layout.addWidget(self.year_combo)
+        year_layout.addStretch()
+        layout.addLayout(year_layout)
+        # 🔹 FIM DA ADIÇÃO
 
         self.table = QTableWidget()
         self.table.setColumnCount(16)
@@ -52,6 +68,14 @@ class ResultadoMensalCRCDFTab(QWidget):
         layout.addWidget(self.table)
         self.table.cellClicked.connect(self.on_cell_clicked)
 
+        # --- habilita seleção/foco e atalho Ctrl+C -----------------
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setFocusPolicy(Qt.StrongFocus)
+        QShortcut(QKeySequence("Ctrl+C"), self.table, self.copiar_tabela_para_clipboard)
+        # -----------------------------------------------------------
+
         self.setLayout(layout)
         self.load_resultado_mensal()
 
@@ -59,6 +83,8 @@ class ResultadoMensalCRCDFTab(QWidget):
         try:
             conn = connect_db()
             cursor = conn.cursor()
+            # 🔹 ADICIONE ISSO - Pega o ano selecionado
+            ano_selecionado = self.year_combo.currentText()
 
             # Carrega metas CRCDF
             cursor.execute("SELECT name, COALESCE(meta_crcdf, 0) FROM procedures WHERE LOWER(name) != 'cancelado'")
@@ -105,6 +131,10 @@ class ResultadoMensalCRCDFTab(QWidget):
                     """, (proc,))
                     for quantidade, data in cursor.fetchall():
                         try:
+
+                            # 🔹 ADICIONE ESTE FILTRO
+                            if not data.endswith(ano_selecionado):
+                                continue
                             mes = int(data.split("-")[1]) - 1
                             qnt = int(quantidade)
                             peso = pesos.get(proc, 1)
@@ -212,6 +242,23 @@ class ResultadoMensalCRCDFTab(QWidget):
         except Exception as e:
             print(f"[ERRO] Falha ao carregar resultado mensal CRCDF: {e}")
 
+    def copiar_tabela_para_clipboard(self):
+        """Copia seleção da tabela para o clipboard em formato tabulado (Excel-friendly)."""
+        ranges = self.table.selectedRanges()
+        if not ranges:
+            return
+
+        linhas = []
+        for sel in ranges:
+            for row in range(sel.topRow(), sel.bottomRow() + 1):
+                linha_texto = []
+                for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                    item = self.table.item(row, col)
+                    linha_texto.append(item.text() if item else "")
+                linhas.append("\t".join(linha_texto))
+
+        QApplication.clipboard().setText("\n".join(linhas).strip())
+
     def toggle_expand_group(self, group_name, row_index):
         from PyQt5.QtGui import QColor
 
@@ -219,6 +266,8 @@ class ResultadoMensalCRCDFTab(QWidget):
         cursor = conn.cursor()
 
         if not hasattr(self, "expanded_groups"):
+            # 🔹 ADICIONE ISSO logo após: if not hasattr(self, "expanded_groups"):
+            ano_selecionado = self.year_combo.currentText()
             self.expanded_groups = {}
 
         # Carrega pesos dos procedimentos
@@ -266,6 +315,9 @@ class ResultadoMensalCRCDFTab(QWidget):
                 """, (proc,))
                 for qnt, data in cursor.fetchall():
                     try:
+                        # 🔹 ADICIONE ESTE FILTRO
+                        if not data.endswith(ano_selecionado):
+                            continue
                         mes = int(data.split("-")[1]) - 1
                         qnt = int(qnt)
                         peso = pesos.get(proc_upper, 1)

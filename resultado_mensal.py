@@ -1,8 +1,11 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,QFileDialog,QMessageBox
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
+    QSizePolicy, QFileDialog, QMessageBox, QApplication, QAbstractItemView,QHBoxLayout,QComboBox,
+    QShortcut
+)
+from PyQt5.QtGui import QColor, QKeySequence, QFont
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 import pandas as pd
-from fpdf import FPDF
 from db import connect_db
 import calendar
 
@@ -24,9 +27,29 @@ class ResultadoMensalTab(QWidget):
         self.title.setStyleSheet("font-size: 22px; font-weight: bold;")
         layout.addWidget(self.title)
 
+        # 🔹 ADICIONE - Seletor de Ano
+        year_layout = QHBoxLayout()
+        year_layout.addWidget(QLabel("Ano:"))
+        self.year_combo = QComboBox()
+        self.year_combo.addItems(["2026", "2025", "2024", "2023"])
+        self.year_combo.setCurrentText("2026")
+        self.year_combo.currentTextChanged.connect(self.load_resultado_mensal)
+        year_layout.addWidget(self.year_combo)
+        year_layout.addStretch()
+        layout.addLayout(year_layout)
+
         self.table = QTableWidget()
+
+        # --- habilita seleção/foco e atalho Ctrl+C -----------------
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)  # ou SelectItems p/ copiar célula a célula
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # permite Shift/Ctrl+cliques
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # impede edição (opcional)
+        self.table.setFocusPolicy(Qt.StrongFocus)  # recebe foco de teclado
+        QShortcut(QKeySequence("Ctrl+C"), self.table, self.copiar_tabela_para_clipboard)
+        # -----------------------------------------------------------
+
         self.table.setColumnCount(14)  # 12 meses + Procedimento + Total
-        self.table.setHorizontalHeaderLabels(["Procedimento"] +['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'] + ["Meta+%CRCDF", "Total Realizado", "% Cumprido"])
+        self.table.setHorizontalHeaderLabels(["Procedimento"] +['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'] + ["Meta CFC", "Total Realizado", "% Cumprido"])
 
         # 🔹 Ajuste de tamanho das colunas
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Procedimento
@@ -51,6 +74,8 @@ class ResultadoMensalTab(QWidget):
         try:
             conn = connect_db()
             cursor = conn.cursor()
+            # 🔹 ADICIONE
+            ano_selecionado = self.year_combo.currentText
 
             # Metas CFC
             cursor.execute("SELECT name, COALESCE(meta_cfc, 0) FROM procedures WHERE LOWER(name) != 'cancelado'")
@@ -97,6 +122,9 @@ class ResultadoMensalTab(QWidget):
                     """, (proc,))
                     for quantidade, data in cursor.fetchall():
                         try:
+                            # 🔹 FILTRO
+                            if not data.endswith(ano_selecionado):
+                                continue
                             mes = int(data.split("-")[1]) - 1
                             qnt = int(quantidade)
                             peso = pesos.get(proc, 1)
@@ -134,7 +162,7 @@ class ResultadoMensalTab(QWidget):
             # Exibição
             self.table.setColumnCount(16)
             self.table.setHorizontalHeaderLabels(
-                ["Procedimento"] +['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'] + ["Meta+%CRCDF", "Total Realizado", "% Cumprido"]
+                ["Procedimento"] +['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'] + ["Meta CFC", "Total Realizado", "% Cumprido"]
             )
             self.table.setRowCount(len(linhas_resultado) + 1)
 
@@ -228,6 +256,23 @@ class ResultadoMensalTab(QWidget):
         font.setBold(True)
         return font
 
+    def copiar_tabela_para_clipboard(self):
+        """Copia linhas/células selecionadas da tabela para o clipboard em formato tabulado."""
+        ranges = self.table.selectedRanges()
+        if not ranges:
+            return
+
+        linhas = []
+        for sel in ranges:
+            for row in range(sel.topRow(), sel.bottomRow() + 1):
+                col_texto = []
+                for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                    item = self.table.item(row, col)
+                    col_texto.append(item.text() if item else "")
+                linhas.append("\t".join(col_texto))
+
+        QApplication.clipboard().setText("\n".join(linhas).strip())
+
     def toggle_expand_group(self, group_name, row_index):
         """
         Expande ou recolhe os procedimentos de um grupo específico na tabela Resultado Mensal (CFC),
@@ -237,6 +282,8 @@ class ResultadoMensalTab(QWidget):
         cursor = conn.cursor()
 
         if not hasattr(self, "expanded_groups"):
+            # 🔹 ADICIONE
+            ano_selecionado = self.year_combo.currentText()
             self.expanded_groups = {}
 
         # 🔹 Carregar pesos
@@ -284,6 +331,9 @@ class ResultadoMensalTab(QWidget):
                 """, (proc,))
                 for qnt, data in cursor.fetchall():
                     try:
+                        # 🔹 FILTRO
+                        if not data.endswith(ano_selecionado):
+                            continue
                         mes = int(data.split("-")[1]) - 1
                         qnt = int(qnt)
                         peso = pesos.get(proc_upper, 1)

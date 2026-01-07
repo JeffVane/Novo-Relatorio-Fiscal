@@ -1,10 +1,23 @@
-import os
-import sqlite3
+from db import connect_db
 
-caminho = r'\\192.168.0.120\Teste\Banco\application.db'
+def popular_metas_2025():
+    conn = connect_db()
+    cursor = conn.cursor()
 
-if not os.path.exists(caminho):
-    print("⚠️ Banco de dados não encontrado. Verifique conexão com a rede ou permissões.")
-else:
-    conn = sqlite3.connect(caminho)
-    print("✅ Conectado com sucesso.")
+    cursor.execute("PRAGMA foreign_keys = ON;")
+
+    cursor.execute("""
+        INSERT INTO metas_anuais (procedure_id, ano, meta_cfc, meta_crcdf)
+        SELECT 
+            id,
+            2025,
+            COALESCE(meta_cfc, 0),
+            COALESCE(meta_crcdf, 0)
+        FROM procedures
+        WHERE name != 'CANCELADO'
+        ON CONFLICT(procedure_id, ano) DO NOTHING;
+    """)
+
+    conn.commit()
+    conn.close()
+    print("✅ Metas de 2025 copiadas para a tabela metas_anuais com sucesso.")

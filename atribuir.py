@@ -831,7 +831,6 @@ class AtribuirTab(QWidget):
             QMessageBox.critical(self, "Erro inesperado", f"Ocorreu um erro ao abrir o diálogo:\n{str(e)}")
             print(f"[ERRO] {e}")
 
-
     def load_spreadsheet(self):
         """ Carrega a planilha Excel e exibe os dados na tabela """
         try:
@@ -847,6 +846,7 @@ class AtribuirTab(QWidget):
                 return
 
             try:
+                # Tenta ler o arquivo
                 df = pd.read_excel(fileName)
             except Exception as e:
                 QMessageBox.critical(self, "Erro ao abrir a planilha",
@@ -856,6 +856,58 @@ class AtribuirTab(QWidget):
             if df.empty:
                 QMessageBox.warning(self, "Aviso", "A planilha está vazia. Selecione um arquivo com dados.")
                 return
+
+            # ⚙️ INÍCIO DA VALIDAÇÃO DOS CAMPOS OBRIGATÓRIOS E FEEDBACK DETALHADO
+            required_columns = [
+                "Data Conclusão", "Número Agendamento", "Fiscal",
+                "Tipo Registro", "Número Registro", "Nome"
+            ]
+
+            # Remove espaços em branco do início/fim dos nomes das colunas lidas
+            df.columns = df.columns.str.strip()
+
+            planilha_columns = list(df.columns)
+            missing_columns = [col for col in required_columns if col not in planilha_columns]
+
+            error_message = []
+
+            # Checa se o número de colunas está correto (para evitar index out of range)
+            if len(planilha_columns) != len(required_columns):
+                error_message.append(
+                    f"A planilha deve ter **{len(required_columns)}** colunas. Sua planilha tem **{len(planilha_columns)}**."
+                )
+
+            # Checa coluna por coluna e fornece feedback sobre o nome incorreto
+            for i, expected_col in enumerate(required_columns):
+                if i < len(planilha_columns):
+                    actual_col = planilha_columns[i]
+                    if actual_col != expected_col:
+                        error_message.append(
+                            f"Coluna na posição {i + 1} **incorreta** ('{actual_col}'). "
+                            f"O correto é **'{expected_col}'**."
+                        )
+                elif expected_col in missing_columns:
+                    # Se faltar no final e já for reportado no 'missing_columns', não precisa repetir
+                    pass
+
+            # Se ainda houver colunas faltando, lista elas
+            if missing_columns and not error_message:  # Se o erro for SÓ de colunas faltando (e não na ordem)
+                error_message.append(
+                    f"As seguintes colunas estão faltando: {', '.join(missing_columns)}."
+                )
+
+            # Se houver qualquer erro, exibe a mensagem detalhada e retorna
+            if error_message:
+                final_error = "Erro de Formato da Planilha. Por favor, verifique:\n\n"
+                final_error += "\n".join(error_message)
+                final_error += f"\n\nColunas Esperadas (Ordem Exata): {', '.join(required_columns)}"
+
+                QMessageBox.critical(self, "Erro de Formato da Planilha", final_error)
+                return
+
+            # 💡 Otimização: Se a validação passou, garante que apenas as colunas necessárias sejam usadas, na ordem correta
+            df = df[required_columns]
+            # ⚙️ FIM DA VALIDAÇÃO DOS CAMPOS OBRIGATÓRIOS E FEEDBACK DETALHADO
 
             self.display_data(df)
             self.stacked_layout.setCurrentIndex(self.table_index)  # Mostra a tabela após carregar a planilha
