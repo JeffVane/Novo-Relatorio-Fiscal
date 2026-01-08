@@ -251,13 +251,14 @@ class ResultadosFiscalTab(QWidget):
 
 
 
+
                     elif col_header in self.fiscais:
 
                         fiscal = col_header
 
                         tabela = f"procedimentos_{fiscal.lower()}"
 
-                        total_proc = 0  # ✅ zera aqui (evita contaminar outros fiscais)
+                        total_fiscal_ponderado = 0  # 🔹 zera corretamente
 
                         try:
 
@@ -271,15 +272,19 @@ class ResultadosFiscalTab(QWidget):
 
                             resultado = cursor.fetchall()
 
+                            proc_id = id_map.get(proc.strip().upper())
+
+                            peso = pesos.get(proc_id, 1)
+
                             for qnt, data in resultado:
 
                                 if qnt is None:
                                     continue
 
                                 if data and ano_selecionado in str(data):
-                                    total_proc += int(qnt)  # ✅ soma só deste fiscal
+                                    total_fiscal_ponderado += int(qnt) * peso  # ✅ aplica peso
 
-                            item_cell.setText(str(total_proc))
+                            item_cell.setText(str(total_fiscal_ponderado))
 
 
                         except Exception as e:
@@ -287,6 +292,7 @@ class ResultadosFiscalTab(QWidget):
                             print(f"[ERRO FISCAL] {e}")
 
                         item_cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+
 
 
                     else:
