@@ -75,7 +75,8 @@ class ResultadoMensalTab(QWidget):
             conn = connect_db()
             cursor = conn.cursor()
             # 🔹 ADICIONE
-            ano_selecionado = self.year_combo.currentText
+            ano_selecionado = self.year_combo.currentText()
+
 
             # Metas CFC
             cursor.execute("SELECT name, COALESCE(meta_cfc, 0) FROM procedures WHERE LOWER(name) != 'cancelado'")

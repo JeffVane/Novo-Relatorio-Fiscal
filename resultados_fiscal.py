@@ -222,44 +222,72 @@ class ResultadosFiscalTab(QWidget):
                         item_cell.setText("–")
                         item_cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 
+
                     elif col_header == "Realizado":
                         total_proc = 0
                         for fiscal in self.fiscais:
                             tabela = f"procedimentos_{fiscal.lower()}"
                             try:
                                 cursor.execute(f"""
-                                    SELECT quantidade FROM '{tabela}'
+                                    SELECT quantidade, data_conclusao FROM '{tabela}'
                                     WHERE UPPER(TRIM(procedimento)) = ?
                                 """, (proc.strip().upper(),))
                                 resultado = cursor.fetchall()
-                                total_proc += sum(r[0] for r in resultado)
+                                for qnt, data in resultado:
+                                    if qnt is None:
+                                        continue
+                                    if data and ano_selecionado in str(data):  # (dd-mm-aaaa)
+                                        total_proc += int(qnt)
+
                             except Exception as e:
                                 print(f"[ERRO SQL] {e}")
-
                         proc_id = id_map.get(proc.strip().upper())
                         peso = pesos.get(proc_id, 1)
                         realizado_pond = total_proc * peso
-                        total_realizado_ponderado += realizado_pond
 
+                        total_realizado_ponderado += realizado_pond
                         item_cell.setText(str(realizado_pond))
                         item_cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
 
+
+
                     elif col_header in self.fiscais:
+
                         fiscal = col_header
+
                         tabela = f"procedimentos_{fiscal.lower()}"
+
+                        total_proc = 0  # ✅ zera aqui (evita contaminar outros fiscais)
+
                         try:
+
                             cursor.execute(f"""
-                                SELECT quantidade FROM '{tabela}'
+
+                                SELECT quantidade, data_conclusao FROM '{tabela}'
+
                                 WHERE UPPER(TRIM(procedimento)) = ?
+
                             """, (proc.strip().upper(),))
+
                             resultado = cursor.fetchall()
-                            peso = pesos.get(id_map.get(proc.strip().upper()), 1)
-                            total_proc += sum(r[0] for r in resultado if
-                                              r[0] is not None and len(r) > 1 and r[1].endswith(ano_selecionado))
+
+                            for qnt, data in resultado:
+
+                                if qnt is None:
+                                    continue
+
+                                if data and ano_selecionado in str(data):
+                                    total_proc += int(qnt)  # ✅ soma só deste fiscal
+
                             item_cell.setText(str(total_proc))
+
+
                         except Exception as e:
+
                             print(f"[ERRO FISCAL] {e}")
+
                         item_cell.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+
 
                     else:
                         item_cell.setFlags(Qt.NoItemFlags)
@@ -443,6 +471,7 @@ class ResultadosFiscalTab(QWidget):
     def load_data(self):
         self.bloquear_sinal = True
         try:
+            self.grupo_linhas.clear()
             conn = connect_db()
             cursor = conn.cursor()
             # 🔹 Obtém o ano selecionado
